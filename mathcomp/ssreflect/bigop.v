@@ -1987,3 +1987,101 @@ Notation big_rmcond :=
 Notation big_uncond_in :=
   ((fun _ _ _ _ => @big_rmcond_in _ _ _ _)
      (deprecate big_uncond_in big_rmcond_in)) (only parsing).
+
+Module OrdSum.
+Section OrdSum.
+
+Context {n : nat} {p_ : 'I_n -> nat}.
+
+Local Notation ordsum := 'I_(\sum_i p_ i)%N.
+
+Implicit Types (i j : 'I_n) (s : ordsum) (p : {i & 'I_(p_ i)}).
+
+Lemma min_subindex_subproof s : {i0 : 'I_n | i0 = 0%N :> nat}.
+Proof.
+elim: (n) (p_) s => [|n' IHn'] q_ s; last by exists ord0.
+by rewrite big_ord0 in s *; exists s; case: s.
+Qed.
+
+Definition min_subindex s := projT1 (min_subindex_subproof s).
+
+Lemma min_subindex_eq0 s : min_subindex s = 0%N :> nat.
+Proof. exact: (projT2 (min_subindex_subproof s)). Qed.
+
+Definition subindex_start i0 := (\sum_(i : 'I_n | i < i0) p_ i)%N.
+
+Definition subindex s : 'I_n :=
+  [arg max_(i0 > min_subindex s | (subindex_start i0 <= s)%N) i0].
+
+Lemma suboffset_subproof s : (s - subindex_start (subindex s) < p_(subindex s))%N.
+Proof.
+rewrite /subindex; case: arg_maxnP => /= [|i0 j_ge i0_ge].
+  by rewrite /subindex_start min_subindex_eq0 big1.
+rewrite ltn_subLR// /subindex_start {j_ge}.
+apply: (@leq_trans (\sum_(i < n | i <= i0) p_ i)%N); last first.
+  by rewrite (bigD1 i0) 1?addnC//; under eq_bigl do rewrite andbC -ltn_neqAle.
+have := (ltn_ord i0); rewrite leq_eqVlt => /predU1P[eq_n|lt_n].
+  move: (val i0) eq_n (p_) s {i0_ge} => {}i0; case: _/ => q_ s.
+  by under [X in (_ < X)%N]eq_bigl do rewrite leq_ord.
+under [X in (_ < X)%N]eq_bigl do rewrite -ltnS; rewrite ltnNge; apply/negP.
+by move=> /(i0_ge (Ordinal lt_n))/=; rewrite ltnn.
+Qed.
+
+Definition suboffset s : 'I_(p_(subindex s)) :=
+  Ordinal (suboffset_subproof s).
+
+Lemma superindex_subproof i0 (k : 'I_(p_ i0)) :
+  (k + subindex_start i0 < \sum_(i < n) p_ i)%N.
+Proof.
+rewrite [X in (_ < X)%N](bigD1 i0)//= -addSn leq_add//.
+rewrite big_mkcond /subindex_start/= big_mkcond/= leq_sum// => i _.
+by rewrite -val_eqE; case: ltngtP.
+Qed.
+
+Definition superindex i0 (k : 'I_(p_ i0)) := Ordinal (superindex_subproof k).
+
+Lemma suboffsetK s : superindex (suboffset s) = s.
+Proof.
+apply: val_inj; rewrite /= subnK /subindex//; case: arg_maxnP => //=.
+by rewrite /subindex_start min_subindex_eq0 big1.
+Qed.
+
+Lemma superindexK1 i0 (k : 'I_(p_ i0)) : subindex (superindex k) = i0.
+Proof.
+apply: val_inj; rewrite /subindex /superindex /= /subindex_start.
+case: arg_maxnP => //=; first by rewrite min_subindex_eq0 big1.
+move=> i exi maxi; apply/eqP; rewrite eqn_leq maxi ?leq_addl ?andbT//.
+apply: contraTT exi; rewrite -!ltnNge => lt_i0i; rewrite -addSn.
+rewrite [X in (_ <= X)%N](bigD1 i0)//= leq_add => //.
+rewrite big_mkcond [X in (_ <= X)%N]big_mkcond leq_sum// => j _.
+rewrite -val_eqE andbC; case: ltngtP => //= lt_ji0.
+by rewrite (leq_trans lt_ji0)// ltnW.
+Qed.
+
+Lemma superindexK i0 (k : 'I_(p_ i0)) :
+  suboffset (superindex k) = cast_ord (congr1 p_ (esym (superindexK1 k))) k.
+Proof. by apply: val_inj => /=; rewrite superindexK1 addnK. Qed.
+
+Definition to_sig s : {i & 'I_(p_ i)} := Tagged _ (suboffset s).
+Definition from_sig p : ordsum := superindex (tagged p).
+
+Lemma from_sig_bij : bijective from_sig.
+Proof.
+exists to_sig => [[i j]|i]; rewrite /to_sig /from_sig/= ?suboffsetK//.
+by rewrite superindexK/=; case: _ / esym => /=; rewrite cast_ord_id.
+Qed.
+
+Lemma to_sig_bij : bijective to_sig.
+Proof.
+exists from_sig => [i|[i j]]; rewrite /to_sig /from_sig/= ?suboffsetK//.
+by rewrite superindexK/=; case: _ / esym => /=; rewrite cast_ord_id.
+Qed.
+
+Lemma from_sig_bij_on : {on [pred _ | true], bijective from_sig}.
+Proof. exact/onW_bij/from_sig_bij. Qed.
+
+Lemma to_sig_bij_on : {on [pred _ | true], bijective to_sig}.
+Proof. exact/onW_bij/to_sig_bij. Qed.
+
+End OrdSum.
+End OrdSum.

@@ -3666,3 +3666,55 @@ Canonical mxOver_subringPred (S : {pred R}) (ringS : subringPred S)
 
 End mxRingOver.
 End mxOver.
+
+Section RowColDiagBlockMatrix.
+Context {R : ringType} {n : nat} {p_ : 'I_n -> nat}.
+
+Definition col_block_mx T m (B_ : forall i, 'M[T]_(p_ i, m)) :=
+  \matrix_(j, k) B_ (OrdSum.subindex j) (OrdSum.suboffset j) k.
+
+Definition row_block_mx T m (B_ : forall i, 'M[T]_(m, p_ i)) :=
+  \matrix_(j, k) B_ (OrdSum.subindex k) j (OrdSum.suboffset k).
+
+Definition diag_block_mx (B_ : forall i, 'M[R]_(p_ i)) :=
+  \matrix_(j, k)
+   if OrdSum.subindex j =P OrdSum.subindex k isn't ReflectT e then 0
+   else B_ (OrdSum.subindex k)
+     (cast_ord (congr1 p_ e) (OrdSum.suboffset j)) (OrdSum.suboffset k).
+
+Lemma mulmx_row_col_block m p
+   (R_ : forall i, 'M[R]_(p, p_ i)) (C_ : forall i, 'M[R]_(p_ i, m)) :
+  row_block_mx R_ *m col_block_mx C_ = \sum_i R_ i *m C_ i.
+Proof.
+apply/matrixP => i j; rewrite !mxE !summxE (reindex _ OrdSum.from_sig_bij_on).
+under [in RHS]eq_bigr do rewrite !mxE; rewrite sig_big_dep /OrdSum.from_sig/=.
+apply: eq_bigr => -[/= k l] _.
+by rewrite !mxE !OrdSum.superindexK/=; case: _ / esym; rewrite cast_ord_id.
+Qed.
+
+Lemma row_diag_block (B_ : forall i, 'M[R]_(p_ i)) k :
+  row k (diag_block_mx B_) =
+  row (OrdSum.suboffset k) (row_block_mx
+    (fun i => if OrdSum.subindex k =P i is ReflectT e
+              then castmx (esym (congr1 p_ e), erefl) (B_ i) else 0)).
+Proof.
+apply/rowP => j; rewrite !mxE; case: eqP => e; rewrite ?mxE ?castmxE//=.
+by rewrite !cast_ord_id esymK.
+Qed.
+
+Lemma row_col_block m (B_ : forall i, 'M[R]_(p_ i, m)) k :
+  row k (col_block_mx B_) = row (OrdSum.suboffset k) (B_ (OrdSum.subindex k)).
+Proof. by apply/rowP => l; rewrite !mxE. Qed.
+
+Lemma mulmx_col_diag m
+    (C_ : forall i, 'M[R]_(p_ i, m)) (D_ : forall i, 'M[R]_(p_ i)) :
+  diag_block_mx D_ *m col_block_mx C_ = col_block_mx (fun i => D_ i *m C_ i).
+Proof.
+apply/row_matrixP => i.
+rewrite row_mul row_diag_block row_col_block -row_mul mulmx_row_col_block.
+congr (row _ _); rewrite (bigD1 (OrdSum.subindex i))//=; case: eqP => //= e.
+rewrite -[e](eq_irrelevance erefl)/= castmx_id big1 ?addr0// => j.
+by case: eqP => Ne; rewrite ?mul0mx// => jNsi; rewrite Ne eqxx in jNsi.
+Qed.
+
+End RowColDiagBlockMatrix.

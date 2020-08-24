@@ -3044,3 +3044,20 @@ Lemma map_center_mx m n (E : 'A_(m, n)) : (('Z(E))^f :=: 'Z(E^f))%MS.
 Proof. by rewrite /center_mx -map_cent_mx; apply: map_capmx. Qed.
 
 End MapMatrixSpaces.
+
+Section RowColDiagBlockMatrix.
+Context {F : fieldType} {n : nat} {p_ : 'I_n -> nat}.
+
+Lemma eqmx_col_block m (V_ : forall i, 'M[F]_(p_ i, m)) :
+  (col_block_mx V_ :=: \sum_i <<V_ i>>)%MS.
+Proof.
+apply/eqmxP/andP; split.
+  apply/row_subP => i; rewrite row_col_block.
+  by rewrite (sumsmx_sup (OrdSum.subindex i))// genmxE row_sub.
+apply/sumsmx_subP => i0 _; rewrite genmxE; apply/row_subP => j.
+apply: (eq_row_sub (OrdSum.superindex j)); apply/rowP => k.
+rewrite 2!mxE [in RHS]mxE OrdSum.superindexK.
+by case: _ / esym; rewrite cast_ord_id.
+Qed.
+
+End RowColDiagBlockMatrix.
