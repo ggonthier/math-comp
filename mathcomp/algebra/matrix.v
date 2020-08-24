@@ -2711,6 +2711,75 @@ Qed.
 
 End MapRingMatrix.
 
+Section CommMx.
+(* Commutation property specialized to ring *)
+
+Variables (R : ringType) (n : nat).
+Implicit Types (f g p : 'M[R]_n) (fs : seq 'M[R]_n) (d : 'rV[R]_n) (I : Type).
+
+Definition commmx  f g : Prop := f *m g =  g *m f.
+Definition commmxb f g : bool := f *m g == g *m f.
+
+Lemma commmx_sym f g : commmx f g -> commmx g f.
+Proof. by rewrite /commmx. Qed.
+
+Lemma commmx_refl f : commmx f f. Proof. by []. Qed.
+
+Lemma commmx0 f : commmx f 0. Proof. by rewrite /commmx mulmx0 mul0mx. Qed.
+Lemma comm0mx f : commmx 0 f. Proof. by rewrite /commmx mulmx0 mul0mx. Qed.
+
+Lemma commmx1 f : commmx f 1%:M. Proof. by rewrite /commmx mulmx1 mul1mx. Qed.
+Lemma comm1mx f : commmx 1%:M f. Proof. by rewrite /commmx mulmx1 mul1mx. Qed.
+
+Hint Resolve commmx0 comm0mx commmx1 comm1mx : core.
+
+Lemma commmxN f g : commmx f g -> commmx f (- g).
+Proof. by rewrite /commmx mulmxN mulNmx => ->. Qed.
+
+Lemma commmxN1 f : commmx f (- 1%:M). Proof. exact/commmxN/commmx1. Qed.
+
+Lemma commmxD f g g' : commmx f g -> commmx f g' -> commmx f (g + g').
+Proof. by rewrite /commmx mulmxDl mulmxDr => -> ->. Qed.
+
+Lemma commmxB f g g' : commmx f g -> commmx f g' -> commmx f (g - g').
+Proof. by move=> fg fg'; apply/commmxD => //; apply/commmxN. Qed.
+
+Lemma commmxM f g g' : commmx f g -> commmx f g' -> commmx f (g *m g').
+Proof. by rewrite /commmx mulmxA => ->; rewrite -!mulmxA => ->. Qed.
+
+Lemma commmx_sum I (s : seq I) (P : pred I) (F : I -> 'M[R]_n) (f : 'M[R]_n) :
+  (forall i : I, P i -> commmx f (F i)) -> commmx f (\sum_(i <- s | P i) F i).
+Proof. by move=> commmxfF; elim/big_ind: _ => // g h; apply: commmxD. Qed.
+
+Lemma commmxP f g : reflect (commmx f g) (commmxb f g).
+Proof. exact: eqP. Qed.
+
+Notation all_commmx := (allrel commmxb).
+
+Lemma all_commmxP fs :
+  reflect {in fs &, forall f g, f *m g = g *m f} (all_commmx fs).
+Proof. by apply: (iffP allrelP) => fsP ? ? ? ?; apply/eqP/fsP. Qed.
+
+Lemma all_commmx1 f : all_commmx [:: f].
+Proof. by rewrite /commmxb allrel1. Qed.
+
+Lemma all_commmx2P f g : reflect (f *m g = g *m f) (all_commmx [:: f; g]).
+Proof.
+by rewrite /commmxb; apply: (iffP and4P) => [[_/eqP//]|->]; rewrite ?eqxx.
+Qed.
+
+Lemma all_commmx_cons f fs :
+  all_commmx (f :: fs) = all (commmxb f) fs && all_commmx fs.
+Proof. by rewrite /commmxb [LHS]allrel_cons. Qed.
+
+End CommMx.
+Arguments commmx  {R n}.
+Arguments commmxb {R n}.
+Notation all_commmx := (allrel commmxb).
+
+Lemma commmxE (R : ringType) (n : nat) : @commmx R n.+1 = @GRing.comm _.
+Proof. by []. Qed.
+
 Section ComMatrix.
 (* Lemmas for matrices with coefficients in a commutative ring *)
 Variable R : comRingType.
@@ -2792,7 +2861,7 @@ Proof.
 by rewrite !mulmx_diag; congr (diag_mx _); apply/rowP=> i; rewrite !mxE mulrC.
 Qed.
 
-Lemma diag_mx_comm n' (d e : 'rV[R]_n'.+1) : GRing.comm (diag_mx d) (diag_mx e).
+Lemma diag_mx_comm n (d e : 'rV[R]_n) : commmx (diag_mx d) (diag_mx e).
 Proof. exact: diag_mxC. Qed.
 
 Lemma scalar_mxC m n a (A : 'M[R]_(m, n)) : A *m a%:M = a%:M *m A.
@@ -2800,11 +2869,17 @@ Proof.
 by apply: trmx_inj; rewrite trmx_mul tr_scalar_mx !mul_scalar_mx linearZ.
 Qed.
 
-Lemma scalar_mx_comm n' a (A : 'M[R]_n'.+1) : GRing.comm A a%:M.
+Lemma scalar_mx_comm n a (A : 'M[R]_n) : commmx A a%:M.
 Proof. exact: scalar_mxC. Qed.
 
 Lemma mul_mx_scalar m n a (A : 'M[R]_(m, n)) : A *m a%:M = a *: A.
 Proof. by rewrite scalar_mxC mul_scalar_mx. Qed.
+
+Lemma commmxC n a (A : 'M[R]_n) : commmx A a%:M.
+Proof. by rewrite /commmx mul_mx_scalar mul_scalar_mx. Qed.
+
+Lemma commCmx n a (A : 'M[R]_n) : commmx a%:M A.
+Proof. exact/commmx_sym/commmxC. Qed.
 
 Lemma mxtrace_mulC m n (A : 'M[R]_(m, n)) B :
    \tr (A *m B) = \tr (B *m A).
@@ -3054,6 +3129,8 @@ Arguments lin_mulmx {R m n p} A.
 
 Canonical matrix_finAlgType (R : finComRingType) n' :=
   [finAlgType R of 'M[R]_n'.+1].
+
+Hint Resolve commmxC commCmx : core.
 
 (*****************************************************************************)
 (********************** Matrix unit ring and inverse matrices ****************)
