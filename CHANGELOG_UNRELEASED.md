@@ -206,6 +206,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     * application of kernel lemmas `mxdirect_sum_geigenspace`,
     * new lemmas: `eigenpolyP`, `eigenvalue_poly`, `eigenspace_sub_geigen`,
   + new `map_mx` lemmas: `map_kermxpoly`, `map_geigenspace`, `eigenpoly_map`.
+- in `mxalgebra.v`, new definitions `maxrankfun`, `fullrankfun` which
+  are "subset function" to be plugged in `rowsub`, with lemmas:
+  `maxrowsub_free`, `eq_maxrowsub`, `maxrankfun_inj`,
+  `maxrowsub_full`, `fullrowsub_full`, `fullrowsub_unit`,
+  `fullrowsub_free`, `mxrank_fullrowsub`, `eq_fullrowsub`, and
+  `fullrankfun_inj`.
 
 ### Changed
 
