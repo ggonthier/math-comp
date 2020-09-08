@@ -244,6 +244,8 @@ Definition eqmx m1 m2 n (A : 'M_(m1, n)) (B : 'M_(m2, n)) :=
 Arguments eqmx {m1%N m2%N n%N} A%MS B%MS.
 Local Notation "A :=: B" := (eqmx A B) : matrix_set_scope.
 
+Notation stablemx V f := (V%MS *m f%R <= V%MS)%MS.
+
 Section LtmxIdentities.
 
 Variables (m1 m2 n : nat) (A : 'M_(m1, n)) (B : 'M_(m2, n)).
@@ -2152,6 +2154,10 @@ Lemma eigenvalueP a :
   reflect (exists2 v : 'rV_n, v *m g = a *: v & v != 0) (eigenvalue a).
 Proof. by apply: (iffP (rowV0Pn _)) => [] [v]; move/eigenspaceP; exists v. Qed.
 
+Lemma eigenvectorP {v : 'rV_n} :
+  reflect (exists a, (v <= eigenspace a)%MS) (stablemx v g).
+Proof. by apply: (iffP (sub_rVP _ _)) => -[a] /eigenspaceP; exists a. Qed.
+
 Lemma mxdirect_sum_eigenspace (P : pred I) a_ :
   {in P &, injective a_} -> mxdirect (\sum_(i | P i) eigenspace (a_ i)).
 Proof.
@@ -2290,6 +2296,51 @@ Notation "\bigcap_ ( i 'in' A | P ) B" :=
   (\big[capmx/1%:M]_(i in A | P%B) B%MS) : matrix_set_scope.
 Notation "\bigcap_ ( i 'in' A ) B" :=
   (\big[capmx/1%:M]_(i in A) B%MS) : matrix_set_scope.
+
+Notation stablemx V f := (V%MS *m f%R <= V%MS)%MS.
+
+Section Stability.
+
+Variable (F : fieldType).
+
+Lemma eqmx_stable m m' n (V : 'M[F]_(m, n)) (V' : 'M[F]_(m', n)) (f : 'M[F]_n) :
+  (V :=: V')%MS -> stablemx V f = stablemx V' f.
+Proof. by move=> eqVV'; rewrite (eqmxMr _ eqVV') eqVV'. Qed.
+
+Section Preservation.
+
+Variables (m n : nat) (V : 'M[F]_(m, n)) (f g : 'M[F]_n).
+
+Lemma stablemx_row_base : (stablemx (row_base V) f) = (stablemx V f).
+Proof. by apply: eqmx_stable; apply: eq_row_base. Qed.
+
+(* equip stableM as a rpred + special cases when n not manifest positive *)
+Lemma stablemxM : stablemx V f -> stablemx V g -> stablemx V (f *m g).
+Proof.
+by move=> f_stab g_stab; rewrite (submx_trans _ g_stab)// mulmxA submxMr.
+Qed.
+
+Lemma stablemxD : stablemx V f -> stablemx V g -> stablemx V (f + g).
+Proof. by move=> f_stab g_stab; rewrite mulmxDr addmx_sub. Qed.
+
+Lemma stablemxN : stablemx V (- f) = stablemx V f.
+Proof. by rewrite mulmxN eqmx_opp. Qed.
+
+Lemma stablemxC x : stablemx V x%:M.
+Proof. by rewrite mul_mx_scalar scalemx_sub. Qed.
+
+Lemma stablemx0 : stablemx V 0. Proof. by rewrite mulmx0 sub0mx. Qed.
+
+End Preservation.
+
+Lemma stablemx_unit (n : nat) (V f : 'M[F]_n) : V \in unitmx -> stablemx V f.
+Proof. by move=> Vunit; rewrite submx_full ?row_full_unit. Qed.
+
+Lemma stablemx_sums (n : nat) (I : finType) (V_ : I -> 'M[F]_n) (f : 'M[F]_n) :
+  (forall i, stablemx (V_ i) f) -> stablemx (\sum_i V_ i)%MS f.
+Proof.
+by move=> fV; rewrite sumsmxMr; apply/sumsmx_subP => i; rewrite (sumsmx_sup i).
+Qed.
 
 Section DirectSums.
 Variables (F : fieldType) (I : finType) (P : pred I).
