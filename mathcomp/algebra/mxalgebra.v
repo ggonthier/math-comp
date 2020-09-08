@@ -2342,6 +2342,25 @@ Proof.
 by move=> fV; rewrite sumsmxMr; apply/sumsmx_subP => i; rewrite (sumsmx_sup i).
 Qed.
 
+Section Commutation.
+
+Variable (n : nat).
+Implicit Types (f g : 'M[F]_n).
+
+Lemma commmmx_stable (f g : 'M[F]_n) : commmx f g -> stablemx f g.
+Proof. by move=> comm_fg; rewrite [_ *m _]comm_fg mulmx_sub. Qed.
+
+Lemma commmx_stable_ker (f g : 'M[F]_n) :
+  commmx f g -> stablemx (kermx f) g.
+Proof.
+move=> comm_fg; apply/sub_kermxP.
+by rewrite -mulmxA -[g *m _]comm_fg mulmxA mulmx_ker mul0mx.
+Qed.
+
+End Commutation.
+
+End Stability.
+
 Section DirectSums.
 Variables (F : fieldType) (I : finType) (P : pred I).
 
