@@ -5,6 +5,21 @@ From mathcomp Require Export ssrnotations.
 (* because there is some Set Warnings "overwriting-delimiting-key".
    somewhere in the above *)
 
+(* Mathcomp-only syntax for the MatchArg utility, see ssrfun.v for more.      *)
+(* Import MatchArgNotation :: activates the notation below.                   *)
+(*   '[p]_m == pattern that matches values '[a] : '[T], with a : T, while     *)
+(*             giving priority to constants and canonical structures          *)
+(*             projections in p, when m : matchArg in unconstrained.          *)
+Module MatchArgNotation.
+Declare Scope match_arg_scope.
+Delimit Scope match_arg_scope with match_arg.
+Open Scope match_arg_scope.
+Notation "'[ a ]_ m" := (MatchArg.apply m a) : match_arg_scope.
+Notation "'[ a ]" := (MatchedArg a) : match_arg_scope.
+Notation "'[ T ]" := (matchedArg T) : type_scope.
+End MatchArgNotation.
+
+
 (*******************)
 (* v8.20 additions *)
 (*******************)

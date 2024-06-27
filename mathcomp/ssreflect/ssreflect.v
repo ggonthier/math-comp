@@ -28,14 +28,15 @@ Global Set Bullet Behavior "None".
 (*                   should be displayed as V. This is declared at level 8 so *)
 (*                   V will be displayed as (V), with parentheses, if V is an *)
 (*                   application or infix expression.                         *)
-(*        -> Usage: Notation "V" := (C ... V ...) : coerced_scope.            *)
-(*           To display the %coerced tag: Close Scope coerced_scope.          *)
-(*           To further disable the notation : Undelimit Scope coerced_scope. *)
+(* --> Usage: Notation "V" := (C ... V ...) : coerced_scope.                  *)
+(*     To display the %coerced tag: Close Scope coerced_scope.                *)
+(*     To disable the notation : Disable Notation (all) : coerced_scope.      *)
 (*                                                                            *)
 (*   matchedArg T == a special-purpose wrapper type that provides some        *)
 (*                   control over unification priorities (see below).         *)
 (*     MatchedArg == a special constructor for matchedArg T (with T implicit) *)
 (*       matchArg == singleton structure type for MatchArg (with T implicit)  *)
+(* --> mathcomp.ssrfun defines infix notation for these.                      *)
 (* --> Usage:                                                                 *)
 (*  + Let us write v1 ~ v2 :> T for the unification problem which Coq solves  *)
 (*    by unifying v1 and v2 at type T while giving PRIORITY to projectors in  *)
@@ -124,7 +125,6 @@ Open Scope coerced_scope.
 (*  forcing us to solve a =~= p all over again, and even possibly diverging   *)
 (* on a ~ p.                                                                  *)
 Module MatchArg.
-
 Variant matched T := Matched of T.
 Structure matcher {T} := { apply : T -> matched T }.
 Variant lock := Lock. Example Key : lock. Proof. exact Lock. Qed.

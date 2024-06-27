@@ -23,6 +23,8 @@
 (*               e^`(n) nth formal derivative (groups, polynomials).          *)
 (*                e^`() simple formal derivative (polynomials only).          *)
 (*                 `|x| norm, absolute value, distance (rings, int, nat).     *)
+(*  '[u, v], '[u, v]_m  hermitian (dot) product, dot product with parameter.  *)
+(*        '[u], '[u]_m  squared norm / dot product; also MatchArg patterns.  *)
 (*      x <= y ?= iff C x is less than y, and equal iff C holds (nat, rings). *)
 (*     x <= y :> T, etc cast comparison (rings, all comparison operators).    *)
 (*    [rec a1, ..., an] standard shorthand for hidden recursor (see prime.v). *)
@@ -97,6 +99,14 @@ Reserved Notation "a ^` ( n )" (at level 8, format "a ^` ( n )").
 
 (* Reserved notation for absolute value. *)
 Reserved Notation  "`| x |" (at level 0, x at level 99, format "`| x |").
+
+(* Reserved notation for dot product and MatchArg patterns. *)
+Reserved Notation "'[ u , v ]_ m"
+  (at level 2, format "'[hv' ''[' u , '/ '  v ]_ m ']'").
+Reserved Notation "'[ u , v ]"
+  (at level 2, format "'[hv' ''[' u , '/ '  v ] ']'").
+Reserved Notation "'[ u ]_ m" (at level 2, format "''[' u ]_ m").
+Reserved Notation "'[ u ]" (at level 2, format "''[' u ]").
 
 (* Reserved notation for conditional comparison *)
 Reserved Notation "x <= y ?= 'iff' c" (at level 70, y, c at next level,
