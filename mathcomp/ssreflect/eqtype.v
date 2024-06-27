@@ -8,7 +8,7 @@ From mathcomp Require Import ssreflect ssrfun ssrbool.
 (*                                                                            *)
 (* NB: See CONTRIBUTING.md for an introduction to HB concepts and commands.   *)
 (*                                                                            *)
-(* This file defines two "base" combinatorial structures:                     *)
+(* This file defines three "base" combinatorial structures:                   *)
 (*      eqType == types with a decidable equality                             *)
 (*                The HB class is called Equality.                            *)
 (*                The equality operation on an eqType is proof-irrelevant     *)
@@ -19,6 +19,11 @@ From mathcomp Require Import ssreflect ssrfun ssrbool.
 (*                The HB class is called SubType.                             *)
 (* subEqType P == join of eqType and subType P                                *)
 (*                The HB class is called SubEquality.                         *)
+(* Sigma.type I T_ == a type isomorphic to {i : I & T_ i}                     *)
+(*                The HB class is SigmaType; the mixin is isSigmaType.        *)
+(* Sigma.eqType I T_ == the join of eqType and Sigma.type I T_.               *)
+(* --> All operations and factories related to Sigma.type are available       *)
+(*  through the Sigma submodule, with the exception of HB classes and mixins. *)
 (*                                                                            *)
 (* The eqType interface supports the following operations (in bool_scope):    *)
 (*              x == y <=> x compares equal to y (this is a boolean test)     *)
@@ -54,7 +59,7 @@ From mathcomp Require Import ssreflect ssrfun ssrbool.
 (*   tagged_at u == Some y, y = tagged u cast as T_ i if tag u = i, else None *)
 (*   tagged_as u v == tagged v cast as T_(tag u) if tag v = tag u,            *)
 (*                    else tagged u                                           *)
-(*  -> We have u == v <=> (tag u == tag v) && (tagged u == tagged_as u v)     *)
+(* --> We have u == v <=> (tag u == tag v) && (tagged u == tagged_as u v)     *)
 (*                                                                            *)
 (* The subType interface supports the following operations:                   *)
 (*     \val == the generic injection from a subType S of T into T             *)
@@ -97,12 +102,48 @@ From mathcomp Require Import ssreflect ssrfun ssrbool.
 (*     have generated, and S_val (S_Sub x Px) (resp. S_val (S_sub x) for the  *)
 (*     newType form) must be convertible to x.                                *)
 (*     variant of the above when S is a wrapper type for T (so P = predT).    *)
-(*   Subtypes inherit the eqType structure of their base types; the generic   *)
-(*   structure should be explicitly instantiated using the                    *)
+(*   Subtypes can inherit the eqType structure of their base types; the       *)
+(*   generic structure should be explicitly instantiated using the            *)
 (*     [Equality of S by <:]                                                  *)
 (*   construct; this pattern is repeated for all the combinatorial interfaces *)
 (*   (Choice, Countable, Finite).                                             *)
 (*                                                                            *)
+(* Sigma                                                                      *)
+(* The Sigma.type interface comprises the following:                          *)
+(*   Sigma.iso I T_ S == a structure encapsulating a bijection from type S to *)
+(*                       {i : I & T_ i}. This is the main data provided by    *)
+(*                       the HB structure SigmaType, but it is NOT an HB      *)
+(*                       mixin; projecions for this structure ar further      *)
+(*                       packaage in the Sigma.iso submodule.                 *)
+(* Sigma.Mixin S isoS == returns the HB isSigmaType mixin for S, built from   *)
+(*                       isoS : Sigma.iso I T_ S.                             *)
+(*         Sigma.on S == the (class) mixin for S when S is a SigmaType.       *)
+(*                    := SigmaType.on S%type.                                 *)
+(*       Sigma.to_sig == the bijection S -> {i : I & T_ i} when S is a        *)
+(*                       SigmaType.                                           *)
+(*       Sigma.of_sig == the inverse of Sigma.to_sig.                         *)
+(*          Sigma.pi1 == the first projection of a type S that is a SigmaType *)
+(*                       under the Sigma.to_sig isomorphism, i.e.,            *)
+(*                       tag (Sigma.to_sig u) = Sigma.pi1 u.                  *)
+(*   --> Sigma.pi1 is an abbreviation so @Sigma.pi1 will not work.            *)
+(*   --> The head of Sigma.pi1 is the Sigma.iso.pi1 projection of the         *)
+(*       Sigma.iso structure, which has canonical values, so Sigma.pi1 will   *)
+(*       match standard first projections such as fst, tag, or tag2.          *)
+(*          Sigma.pi2 == the second projection of a type S that is a          *)
+(*                       SigmaType under the Sigma.to_sig isomorphism, i.e.,  *)
+(*                   tagged (Sigma.to_sig u) = Sigma.pi2 u : T_ (Sigma.pi1 u) *)
+(*        Sigma.dpair == the dependent pair constructor for a type S that is  *)
+(*                       a SigmaType, under the Sigma.of_sig isomorphism:     *)
+(*                       of_sig (Tagged T_ (y : T_ i)) = Sigma.dpair i y.     *)
+(*   --> Sigma.pi2 and Sigma.dpair are also abbreviations that hide           *)
+(*       projections with canonical values.                                   *)
+(*          Sigma.Iso == the constructor for Sigma.iso; arguments are the pi1 *)
+(*                       and pi2 projections, the dpair constructor, and the  *)
+(*                       two cancellation lemmas for of_sig and to_sig. The   *)
+(*                       latter are derived as to_sig u = Tagged T_ (pi2 u)   *)
+(*                       and of_sig v := dpair (tag v) (tagged v).            *)
+(*   --> Instances of Sigma.Iso should be made canonical when pi1, pi2 and/or *)
+(*       dpair have head constants that can be recognized.                    *)
 (* List of factories with a dedicated alias (not generated automatically):    *)
 (*   inj_type injf == alias of T to copy an interface from another T' already *)
 (*                    equipped with it and injf : injective f with f : T -> T'*)
@@ -139,6 +180,7 @@ HB.mixin Record hasDecEq T := { eq_op : rel T; eqP : eq_axiom eq_op }.
 
 #[mathcomp(axiom="eq_axiom"), short(type="eqType")]
 HB.structure Definition Equality := { T of hasDecEq T }.
+Bind Scope type_scope with eqType.
 
 #[deprecated(since="mathcomp 2.0.0", note="Use Equality.clone instead.")]
 Notation "[ 'eqType' 'of' T 'for' C ]" := (Equality.clone T%type C)
@@ -308,7 +350,7 @@ Module Type EqTypePredSig.
 Parameter sort : eqType -> predArgType.
 End EqTypePredSig.
 Module MakeEqTypePred (eqmod : EqTypePredSig).
-Coercion eqmod.sort : eqType >-> predArgType.
+#[warning="-ambiguous-paths"] Coercion eqmod.sort : eqType >-> predArgType.
 End MakeEqTypePred.
 Module Export EqTypePred := MakeEqTypePred eqtype.Equality.
 
@@ -531,6 +573,62 @@ End ComparableType.
 Definition eq_comparable (T : eqType) : comparable T :=
   fun x y => decP (x =P y).
 
+(*   There should be a rel definition for the subType equality op, but this   *)
+(* seems to cause the simpl tactic to diverge on expressions involving == on  *)
+(* 4+ nested subTypes in a "strict" position (e.g., after ~~).                *)
+(*    Definition feq f := [rel x y | f x == f y].                             *)
+(* We define a volatile apply_inj label to help refold instances of == that   *)
+(* have been involuntarily expanded while matching an undelimited application *)
+(* of an instance of a predicate with finite support - see finpred.v.         *)
+
+Section TransferType.
+
+Variables (T T' : Type) (f : T -> T').
+
+Definition inj_type of injective f : Type := T.
+Definition pcan_type g of pcancel f g : Type := T.
+Definition can_type g of cancel f g : Type := T.
+Local Definition apply_inj := f.
+
+End TransferType.
+Arguments apply_inj {T T'} f _ /.
+
+Section TransferEqType.
+
+Variables (T : Type) (eT : eqType) (f : T -> eT).
+
+Let f_eq x y := apply_inj f x == apply_inj f y.
+
+Lemma inj_eqAxiom : injective f -> Equality.axiom f_eq. 
+Proof. by move=> f_inj x y; apply: (iffP eqP) => [|-> //]; apply: f_inj. Qed.
+
+HB.instance Definition _ f_inj := hasDecEq.Build (inj_type f_inj)
+  (inj_eqAxiom f_inj).
+
+HB.instance Definition _ g (fK : pcancel f g) := Equality.copy (pcan_type fK)
+  (inj_type (pcan_inj fK)).
+
+HB.instance Definition _ g (fK : cancel f g) := Equality.copy (can_type fK)
+  (inj_type (can_inj fK)).
+
+Definition deprecated_InjEqMixin f_inj := hasDecEq.Build T (inj_eqAxiom f_inj).
+Definition deprecated_PcanEqMixin g (fK : pcancel f g) :=
+  deprecated_InjEqMixin (pcan_inj fK).
+Definition deprecated_CanEqMixin g (fK : cancel f g) :=
+  deprecated_InjEqMixin (can_inj fK).
+
+End TransferEqType.
+
+#[deprecated(since="mathcomp 2.0.0",
+  note="Use Equality.copy T (inj_type f_inj) instead")]
+Notation InjEqMixin := deprecated_InjEqMixin.
+#[deprecated(since="mathcomp 2.0.0",
+  note="Use Equality.copy T (pcan_type fK) instead")]
+Notation PcanEqMixin := deprecated_PcanEqMixin.
+#[deprecated(since="mathcomp 2.0.0",
+  note="Use Equality.copy T (can_type fK) instead")]
+Notation CanEqMixin := deprecated_CanEqMixin.
+
 #[key="sub_sort"]
 HB.mixin Record isSub (T : Type) (P : pred T) (sub_sort : Type) := {
   val_subdef : sub_sort -> T;
@@ -547,7 +645,7 @@ Notation "\val" := (isSub.val_subdef (SubType.on _)) (only parsing).
 Notation "\val" := (isSub.val_subdef _) (only printing).
 
 #[deprecated(since="mathcomp 2.0.0", note="Use Sub instead.")]
-Notation sub := Sub.
+Notation sub := Sub (only parsing).
 
 #[short(type="subEqType")]
 HB.structure Definition SubEquality T (P : pred T) :=
@@ -729,55 +827,6 @@ Notation "{ ? x 'in' A | P }" := {? x | (x \in A) && P}
 Definition insigd T (A : mem_pred T) x (Ax : in_mem x A) :=
   insubd (exist [eta A] x Ax).
 
-(* There should be a rel definition for the subType equality op, but this *)
-(* seems to cause the simpl tactic to diverge on expressions involving == *)
-(* on 4+ nested subTypes in a "strict" position (e.g., after ~~).         *)
-(* Definition feq f := [rel x y | f x == f y].                            *)
-
-Section TransferType.
-
-Variables (T T' : Type) (f : T -> T').
-
-Definition inj_type of injective f : Type := T.
-Definition pcan_type g of pcancel f g : Type := T.
-Definition can_type g of cancel f g : Type := T.
-
-End TransferType.
-
-Section TransferEqType.
-
-Variables (T : Type) (eT : eqType) (f : T -> eT).
-
-Lemma inj_eqAxiom : injective f -> Equality.axiom (fun x y => f x == f y).
-Proof. by move=> f_inj x y; apply: (iffP eqP) => [|-> //]; apply: f_inj. Qed.
-
-HB.instance Definition _ f_inj := hasDecEq.Build (inj_type f_inj)
-  (inj_eqAxiom f_inj).
-
-HB.instance Definition _ g (fK : pcancel f g) := Equality.copy (pcan_type fK)
-  (inj_type (pcan_inj fK)).
-
-HB.instance Definition _ g (fK : cancel f g) := Equality.copy (can_type fK)
-  (inj_type (can_inj fK)).
-
-Definition deprecated_InjEqMixin f_inj := hasDecEq.Build T (inj_eqAxiom f_inj).
-Definition deprecated_PcanEqMixin g (fK : pcancel f g) :=
-  deprecated_InjEqMixin (pcan_inj fK).
-Definition deprecated_CanEqMixin g (fK : cancel f g) :=
-  deprecated_InjEqMixin (can_inj fK).
-
-End TransferEqType.
-
-#[deprecated(since="mathcomp 2.0.0",
-  note="Use Equality.copy T (inj_type f_inj) instead")]
-Notation InjEqMixin := deprecated_InjEqMixin.
-#[deprecated(since="mathcomp 2.0.0",
-  note="Use Equality.copy T (pcan_type fK) instead")]
-Notation PcanEqMixin := deprecated_PcanEqMixin.
-#[deprecated(since="mathcomp 2.0.0",
-  note="Use Equality.copy T (can_type fK) instead")]
-Notation CanEqMixin := deprecated_CanEqMixin.
-
 Definition sub_type T (P : pred T) (sT : subType P) : Type := sT.
 HB.instance Definition _ T (P : pred T) (sT : subType P) :=
   SubType.on (sub_type sT).
@@ -851,7 +900,8 @@ Section OptionEqType.
 Variable T : eqType.
 
 Definition opt_eq (u v : option T) : bool :=
-  oapp (fun x => oapp (eq_op x) false v) (~~ v) u.
+  if u isn't Some x then if v is None then true else false else
+  if v is Some y then x == y else false.
 
 Lemma opt_eqP : Equality.axiom opt_eq.
 Proof.
@@ -1039,3 +1089,136 @@ by apply: hmf => // ?? _ _; apply: hf.
 Qed.
 
 End MonoHomoTheory.
+
+(* Ideally we should be able to implement the Sigma.type interface by just    *)
+(* putting all the HB declarations in a Sigma submodule, along with the       *)
+(* relevant general theory. This would have the added benefit of also         *)
+(* packaging HB structure, mixin and instance names. Alas this doesn't work   *)
+(* in the current (1.7.0) version of HB, because HB recognizes but does not   *)
+(* honor the #[local] attribute, nor does it provide a documented import      *)
+(* category to selectively export its crucial registrations for mixins,       *)
+(* structures, factories and builders.                                        *)
+
+(* The iso structure must come before the (global) HB declarations, so it has *)
+(* to sit in its own module - we then alias it from the main Sigma submodule. *)
+Module SigmaIsomorphism. 
+Local Unset Implicit Arguments.
+Structure iso {I : Type} {T_ : I -> Type} {S : Type} := Iso {
+    pi1 : S -> I;
+    pi2 u : T_ (pi1 u);
+    dpair i : T_ i -> S;
+    #[canonical=no] eta u : dpair (pi1 u) (pi2 u) = u;
+    #[canonical=no] dpairK i y : Tagged T_ (pi2 (dpair i y)) = Tagged T_ y
+  }.
+Arguments iso : clear implicits.
+Arguments Iso {I} T_ S pi1 pi2 dpair eta dpairK.
+Arguments dpair {I T_ S} i & y : rename.
+End SigmaIsomorphism.
+
+#[key=S] HB.mixin Record isSigmaType I (T_ : I -> Type) S :=
+  {_ : SigmaIsomorphism.iso I T_ S}.
+
+HB.structure Definition SigmaType I T_ := {S of isSigmaType I T_ S}.
+
+HB.structure Definition SigmaEqType I T_ :=
+  {S of SigmaType I T_ S & Equality S}.
+
+Module Export (canonicals) Sigma.
+
+Notation type := @SigmaType.type.
+Notation eqType := @SigmaEqType.type.
+Notation Mixin S isoS := (isSigmaType.Build _ _ S%type isoS).
+Notation on S := (SigmaType.on S%type).
+
+Module iso := SigmaIsomorphism.
+Notation iso := iso.iso.
+Notation Iso := iso.Iso.
+
+Definition _iso {I T_ S} : iso I T_ (SigmaType.sort S) :=
+  let: SigmaType.Class (isSigmaType.Axioms_ iso) := SigmaType.class S in iso.
+Notation pi1 := (iso.pi1 _iso).
+Notation pi2 := (iso.pi2 _iso).
+Notation dpair := (iso.dpair _iso).
+
+Section Instances.
+
+Canonical sigTiso {I T_} :=
+  Iso T_ {i & T_ i} tag tagged (@existT I T_) (fsym sigT_eta) (fun=> frefl _).
+
+Canonical prod_iso {T1 T2} :=
+  Iso (fun=> T2) (T1 * T2) fst snd pair
+    (fsym (@surjective_pairing _ _)) (fun=> frefl _).
+
+Canonical sigT2iso {I} {T1_ T2_ : I -> Type} :=
+  Iso (fun i => T1_ i * T2_ i)%type  {i & T1_ i & T2_ i}
+     tag2 (unkeyed [eta tagged]) (unkeyed (fun i p => Tagged2 T1_ T2_ p.1 p.2))
+    (fsym sigT2_eta) (fun _ _ => tag2_of_tagK (Tagged _ _)).
+
+Context {I : Equality.type} {T : Type} (sz : T -> I).
+
+Definition grade i := [pred x | sz x == i].
+Variable S : forall i, subType (grade i).
+
+Definition grade_refl x : grade (sz x) x := eq_refl (sz x).
+Definition in_grade x : S (sz x) := Sub x (grade_refl x).
+Fact in_gradeK x : val (in_grade x) = x. Proof. exact: SubK. Qed.
+Fact grade_valK i (y : S i) :
+  Tagged [eta S] (in_grade (val y)) = Tagged [eta S] y.
+Proof.
+rewrite /in_grade; rewrite (eqP (valP y)) in (Ey := grade_refl _) *.
+by congr Tagged; apply/val_inj/SubK.
+Qed.
+ 
+Definition gradedIso :=
+  Iso [eta S] T sz in_grade (fun=> val) in_gradeK grade_valK.
+
+End Instances.
+
+Section Theory.
+Context {I : Type} {T_ : I -> Type} {S : type I T_}.
+
+Definition of_tagged (v : {i & T_ i}) : S := dpair (tag v) (tagged v).
+Definition to_tagged (u : S) : {i & T_ i} := Tagged T_ (pi2 u).
+
+Lemma to_taggedK : cancel to_tagged of_tagged.
+Proof. exact: iso.eta. Qed.
+Lemma of_taggedK : cancel of_tagged to_tagged.
+Proof. by case; apply: iso.dpairK. Qed.
+
+Lemma eta (u : S) : dpair (pi1 u) (pi2 u) = u.
+Proof. exact: iso.eta. Qed.
+
+Lemma dpairK i y (u : S := dpair i y) :
+  {dpairK1 : pi1 u = i | ecast j (T_ j) dpairK1 (pi2 u) = y}.
+Proof.
+pose cast_tagged v : tag v = i -> T_ i :=
+  let: existT _ z := v in fun Di => ecast j (T_ j) Di z.
+have Dv: Tagged T_ y = to_tagged u by apply/esym/iso.dpairK.
+pose Di := esym (congr1 tag Dv); exists Di.
+by rewrite -[LHS]/(cast_tagged (to_tagged u) Di) {}/Di; case: _ / Dv.
+Qed.
+
+Definition dpairK1 i y := (sval (@dpairK i y)).
+Definition dpairK2 i y : ecast j (T_ j) (dpairK1 y) (pi2 (dpair i y)) = y.
+Proof. exact: (svalP (@dpairK i y)). Qed.
+
+End Theory.
+Arguments dpairK {I T_} S i y.
+
+Arguments dpairK1 {I T_} S i y.
+Arguments dpairK2 {I T_} S i y.
+
+End Sigma.
+
+HB.instance Definition _ I T_ :=
+  Sigma.Mixin {i : I & T_ i} Sigma.sigTiso.
+HB.instance Definition _ T1 T2 :=
+  Sigma.Mixin (T1 * T2) Sigma.prod_iso.
+HB.instance Definition _ I T1_ T2_ :=
+  Sigma.Mixin {i : I & T1_ i & T2_ i} Sigma.sigT2iso.
+
+HB.instance Definition _ (I : eqType) (T_ : I -> eqType) := Sigma.on {i & T_ i}.
+HB.instance Definition _ (T1 T2 : eqType) := Sigma.on (T1 * T2).
+HB.instance Definition _ (I : eqType) (T1_ T2_: I -> eqType) :=
+  Sigma.on {i & T1_ i & T2_ i}.
+
