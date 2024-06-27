@@ -1086,17 +1086,6 @@ Fixpoint mem_seq (s : seq T) : {pred T} :=
 Coercion mem_seq : seq >-> pred_sort.
 Canonical seq_predType := PredType mem_seq.
 
-#[deprecated(since="mathcomp 2.4", note="Use seq instead")]
-Definition seq_eqclass := seq T.
-#[reversible=no, warnings="-deprecated",
-   deprecated(since="mathcomp 2.4", note="Use mem_seq instead")]
-Coercion pred_of_seq (s : seq_eqclass) : {pred T} := mem_seq s.
-#[warnings="-ambiguous-paths -deprecated"]
-Identity Coercion seq_of_eqclass : seq_eqclass >-> seq.
-(* The line below makes pred_of_seq a canonical instance of topred. *)
-#[warnings="-deprecated"]
-Canonical seq_eqclass_predType := PredType pred_of_seq.
-
 Lemma in_cons y s x : (x \in y :: s) = (x == y) || (x \in s).
 Proof. by []. Qed.
 
@@ -1526,6 +1515,10 @@ Proof. by move=> ?; rewrite eq_sym uniq_eqseq_pivotl//; case: eqVneq => /=. Qed.
 
 End EqSeq.
 Arguments eqseq : simpl nomatch.
+#[deprecated(since="mathcomp 2.4", note="Use seq instead")]
+Notation seq_eqclass T := (seq (Equality.sort T)) (only parsing).
+#[deprecated(since="mathcomp 2.4", note="Use mem_seq instead")]
+Notation pred_of_seq := mem_seq.
 
 Section RotIndex.
 Variables (T : eqType).
