@@ -10,6 +10,7 @@
 *.a
 *.o
 *.v.timing
+.DS_store
 Make*.coq
 Make*.coq.bak
 Make*.coq.conf
