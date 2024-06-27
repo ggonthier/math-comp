@@ -8,26 +8,6 @@ Set Implicit Arguments.
 Unset Strict Implicit.
 Unset Printing Implicit Defensive.
 
-(* Corresponding eqtype additions. *)
-
-#[hnf] HB.instance Definition _ (I : eqType) (T1_ T2_ : I -> eqType) :=
-   Equality.copy {i : I & T1_ i & T2_ i} (can_type tag_of_tag2K).
-
-Definition otagged_at {I : eqType} {i T_} (w : {i : I & T_ i}) :=
-  if tag w =P i isn't ReflectT Ewi then None else
-  ecast i (option (T_ i)) Ewi (Some (tagged w)).
-
-Lemma TaggedK {I : eqType} {i T_} : pcancel (@Tagged I i T_) otagged_at.
-Proof.
-by rewrite /otagged_at => y; case: eqP => //= Eii; rewrite eq_axiomK.
-Qed.
-
-Lemma Tagged2K {I : eqType} {i T1_ T2_ y1} :
-  pcancel (@Tagged2 I i T1_ T2_ y1) (omap snd \o otagged_at \o tag_of_tag2).
-Proof. by move=> y2; rewrite /= TaggedK. Qed.
-
-(* End of eqtype complements. *)
-
 (*   This module provides facilities for handling (boolean) predicates with   *)
 (* finite support, i.e., for which an explicit list of the values for which   *)
 (* the predicate holds can given. These facilities include an extensive and   *)
@@ -38,512 +18,1567 @@ Proof. by move=> y2; rewrite /= TaggedK. Qed.
 (*                  coerces to {pred T}, and this coercion will unify with    *)
 (*                  many predicates that have finite support, thereby         *)
 (*                  inferring said support (see list below).                  *)
-(*     finpred T == the representation type for predicates with finite        *)
-(*                  support. This type is used to declare arguments of        *)
-(*                  finpred operations. Predicates P with finite support will *)
-(*                  coerce or reverse coerce to finpred T, but the resulting  *)
-(*                  finpred may not preserve the shape of P - it can present  *)
-(*                  a predicate P' convertible but not identical to P.        *)
-(*                  ***For this reason {finpred T} should always be used      *)
-(*                  for declaring lemma contexts.***                          *)
-(* card P, #|P| == the cardinal of the support of a finpred P.                *)
-(*     pred0b P == the finpred P is empty (always false).                     *)
-(*    P \subset Q <=> the finpred P is a subset of the (plain) predicate Q    *)
-(*    P \proper Q <=> the finpred P is a proper subset of the finpred Q.      *)
-(*    support P == the support of a finpred P, i.e., a duplicate-free         *)
-(*                 sequence of the values on which P holds. Note that suppprt *)
-(*                 is NOT extensional: support P and support Q may differ for *)
-(*                 equivalent (or even convertible!) P and Q.                 *)
-(*       enum P == a standard enumeration of the support of P, using a Choice *)
-(*                 structure on T; this is both extensional and stable -      *)
-(*                 enum P is a subsequence of enum Q when {subset P <= Q}     *)
-(*       pick P == Some standard x such that P x, or None if P is empty.      *)
-(*                 pick P is extensional and requires Choice on T.            *)
+
+(*  --> Because of coercions and reverse coercions, an operation or lemma     *)
+(* expects an F : {finpred T} can be applied to any A that either coerces to  *)
+(* {finpred T}, or to a P : {pred T} for which an F : {finpred T} that        *)
+(* coerces to P can be found by unification. We summarize all three cases by  *)
+(* stating that the operation or lemma expects "an A that is a finpred".      *)
+(* --> The instances and coercions we define ensure that when A is a finpred, *)
+(* A : {pred T} and A : {finpred T} : {pred T} are always convertible.        *)
 (*                                                                            *)
-(* Shape of predicates that can be inferred as finpred's                      *)
-(* (T : choiceType unless stated otherwise):                                  *)
-(* - [pred x in P]                       with P : finpred T                   *)
-(* - [pred x | P x && Q x]               with P : finpred T or Q : finpred T  *)
-(*   e.g., [pred x | ([in P] x) && Q x] with P : finpred T                    *)
-(* - [pred x | (x \in P) || (x \in Q)]   with P, Q : finpred T                *)
-(* - [pred x | P x]                      with P : pred T and T : finType      *)
-(* - [pred x : T | def x ]               where def's sort can be inferred to  *)
-(*                                       be of type finPred T                 *)
+(*  Finpred.support A == the support A, where A is a finpred, i.e., a         *)
+(*                 duplicate-free sequence of the values on which A holds.    *)
+(* --> Note that Finpred.support is NOT extensional; in particular equivalent *)
+(* and even convertible predicates  P, Q : {pred T} that are finpreds may     *)
+(* have different supports -- these may be nontivial permutations of each     *)
+(* other. For that reason Finpred.support should only be used to define       *)
+(* operations that can be computed up to permutation.                         *)
+(* --> The enum operation below the preferred alternative, available when     *)
+(* when T is choiceType.                                                      *)
 (*                                                                            *)
+(*   card A, #|A| == the number of elements for which a finpred A holds,      *)
+(*                 i.e., the size of its support.                             *)
+(*       pred0b A <=> the finpred A is empty (always false).                  *)
+(*    A \subset B <=> the finpred A is a subset of the (plain) predicate B    *)
+(*    A \proper B <=> the finpred P is a proper subset of the finpred B.      *)
+(* [disjoint A & B] <=> the finpred A is disjoint from the predicate B.       *)
+(*         enum A == a standard enumeration of the support of A, when T is a  *)
+(*                 choiceType; enum is both extensional and stable -          *)
+(*                 enum A is a subsequence of enum B when A \subset B.        *)
+(*         pick A == some standard x on which a finpred A holds, or None if   *)
+(*                 A is empty; pick A is extensional but can only be used     *)
+(*                 when T is a choiceType.                                    *)
+(*     dinjectiveb f A <=> f restricted to the finpred A is injective.        *)
+(*                                                                            *)
+(*  Coq will infer a finpred for a predicate A based on the body Ax of A for  *)
+(* a fresh variable x : T, i.e., a partial reduction of A x, so we have both  *)
+(* A x = Ax and A = fun x => Ax. The class of predicate bodies that are       *)
+(* recognized as finpred bodies for a given variable x is extensible, but     *)
+(* comprises at least:                                                        *)
+(*  + false       is the body of the empty finpred for any x.                 *)
+(*  + (A : {pred T}) x where A coerces to a {finpred T}, in particular for    *)
+(*                A : {finpred T}, A : seq T, and A : {set T}.                *)
+(*  + any Ax      is a finpred body for x when T is a finType (see module     *)
+(*                fintype), but this is used as a last resort so that finpred *)
+(*                inference is as consistent as possible with the non-finType *)
+(*                case.                                                       *)
+(*  + x == a, a == x where a does not depend on x.                            *)
+(*  + x <= n      where n does not depend on x.                               *)
+(*  + A (f x)     when A y is a finpred body for y and f is a function with   *)
+(*                a bounded preimage. The latter notion is also extensible    *)
+(*                and inferred from the expression fx = f x for x; it         *)
+(*                includes cancellable and partially cancellable functions,   *)
+(*                such as instances of the subType projector val, partially   *)
+(*                applied pair and existT constructors, most nat arithmetic   *)
+(*                functions, as well as composition of functions with a       *)
+(*                bounded preimages.                                          *)
+(*  + Ax || Bx    where Ax and Bx are both finpred bodies for x.              *)
+(*  + Ax (+) Bx   where Ax and Bx are both finpred bodies for x.              *)
+(*  + Ax && Bx    where Ax is a finpred body for x (Bx is any expression).    *)
+(*  + Ax && Bx    where Bx is a finpred body for x, and Ax is manifestly      *)
+(*                unlikely to be a finpred body (unless T is a finType).      *)
+(*                The latter notion is also extensible, but by default only   *)
+(*                covers cases where Ax does not depend on x (note that the   *)
+(*                Ax = false case is covered by the first rule), Ax is ~~ Cx, *)
+(*                or Ax is m <= fx where m does not depend on x.              *)
+(*  + A (f x) && B x where T is isomorphic to a sigma type {i : I & T_ i},    *)
+(*                in which f x maps x to the first component (the i) of the   *)
+(*                corresponding dependent pair, A i is a finpred body for i,  *)
+(*                and for all i, B (g i y) is a finpred body for y : T_ i,    *)
+(*                where g i y : T corresponds to the dependent pair           *)
+(*                existT T_ i y.                                              *)
+(* --> Caveat: currently the sigma-type case is only partially implemented.   *)
+(*  The implementation only handles simple abstract cases such as the predX   *)
+(*  combinator.                                                               *)
+(*  + (if Cx then Ax else Bx) when both Ax and Bx are finpred bodies for x.   *)
+(*  + (if Cx then Ax else Bx) when both Cx and Bx are finpred bodies for x,   *)
+(*    and Ax is manifestly unlikely to be a finpred body (see the second case *)
+(*    for Ax && Bx above).                                                    *)
+(*                                                                            *)
+(*    The finpred inference for a given A attempts to minimize duplication of *)
+(* the contents of A. There is no duplication when A coerces to {finpred T}   *)
+(* or A is the {pred T} coercion of a B that coerces to {finpred T}. In other *)
+(* cases we first infer an F : {finpred T} whose coercion to {pred T} is      *)
+(* convertible to but may differ considerably from A, then inject in it a     *)
+(* copy of the original A to obtain a finpred that coerces exactly to A.      *)
+(*    The initially inferred F follows the structure of A but does not        *)
+(* duplicate any part of it (with one possible exception for the sigma type   *)
+(* case for &&) so the final inferred finpred only contains two copies of A.  *)
+(*    Note that reverse coercion, if used, will add a third copy for display  *)
+(* purposes (or a second one in the coercion-to-pred-and-finpred case). This  *)
+(* extra copy is actually unnecessary here as we ensure that the inferred     *)
+(* finpred always diplays as A; perhaps a future version of Coq will provide  *)
+(* some means to turn off the insertion of the reverse_coercion constant when *)
+(* it is not needed.                                                          *)
+(*   We define instances that infer finpreds both when the predicate body is  *)
+(* well delimited as we unify A : {pred T} with ?F : {finpred T} coerced to   *)
+(* {pred T}, e.g., when unifying (a \in A) with (?v \in ?F), as well as when  *)
+(* the predicate body is undelimited and we have to unify Ax : bool with      *)
+(* (?F : {pred T}) x for some variable x : T , e.g., when unifying  (a \in A) *)
+(* with (?v \in [predU1 ?a1 & ?F]).                                           *)
+(*   In the latter case we exploit the higher order (Miller pattern) feature  *)
+(* of Coq unification to infer A = [pred x | Ax] from Ax and x, which we      *)
+(* store in the inferred finpred F both for legibility and to allow           *)
+(* rewrite inE to expand a \in F to Ax{a/x}. In either case we make sure that *)
+(* F displays as A, and that simpl simplifies a \in F to just a \in c0 A      *)
+(* where c0 is a fixed identity coercion function.                            *)
+(* ---> One important Caveat: when using rewrite in the undelimited case,     *)
+(* Coq will expand head constants in Ax before the attempting to grab the     *)
+(* predicate body, leading to possible unwanted expansion in the inferred     *)
+(* predicate, or even ruining the inference altogether, in particular when    *)
+(* the head symbol is a computable eq_op (==) or a non-computable if.         *)
 
-Declare Scope coerced_scope.
-Delimit Scope coerced_scope with coerced.
-Open Scope coerced_scope.
-Reserved Notation "P" (at level 8, only printing).
+Module Export (coercions, canonicals) HOpattern.
+Section HOpattern.
+Unset Implicit Arguments.
+Unset Printing Records.
+Set Universe Polymorphism.
+Universes s u.
+Notation sType := (Type@{s}).
+Notation uType := (Type@{u}).
 
-Record finpredEnvelope (T : eqType) (P : {pred T}) :=
-  FinpredEnvelope {envelope_seq :> seq T; _ : {subset P <= envelope_seq}}.
-Add Printing Constructor finpredEnvelope.
+Variable absT : uType. (* Type of abstracted term. *)
 
-(* Eta convertibility for finpred_seq construction and ManifestCoerced case. *)
-#[projections(primitive)]
-Record finpred T :=
-  Finpred { finpred_pred; envelope : @finpredEnvelope T finpred_pred}.
-Add Printing Constructor finpred.
-Arguments Finpred {T} P E : rename.
-Arguments envelope {T} F : rename, simpl never.
+Variant packed : sType := Pack (U : uType) of U.
 
-Variant finpredPilot := TryInferFinpred.
-Definition TryCoercedFinpred := TryInferFinpred.
+Variant unmatched : Set := BuildUnmatched.
+Example Unmatchable : unmatched. Proof. split. Qed.
+Definition frozen := unmatched -> uType.
+Notation freeze fU := (fU Unmatchable).
+Structure unfrozen : sType :=
+  Unfrozen { _ : frozen; _ : uType; unfrozen_Type :> uType }.
+Definition unfreeze (fU : frozen) (U : uType) := Unfrozen fU U (freeze fU).
+Canonical InferFrozen (U : uType) := Unfrozen (fun=> U) U U.
 
-Structure appliedFinpred (T : eqType) := AppliedFinpred {
-(* resorting to unnamed fields because the #[canonical=no] attibute is *)
-(* ignored in Coq 8.18 *)
-  _ : T; _ : finpred T; _ : finpredPilot;
-  applied_finpred_holds :> bool
-}.
+Variant call : Set := Call.
 
-Definition finpred_source_class := finpred.
-#[reversible=no, warnings="-uniform-inheritance"]
-Coercion apply_finpred {T} x (F : finpred_source_class T) :=
-  @AppliedFinpred T x F TryCoercedFinpred (finpred_pred F x).
-Canonical finpred_predType T :=
-  PredType (fun (F : finpred T) x => apply_finpred x F).
-#[reversible=no, warnings="-uniform-inheritance"]
-Coercion mem_finpred T (F : finpred T) : {pred T} :=
-  fun x => apply_finpred x F.
-Arguments mem_finpred {T} F x /.
+Structure unify {U : sType} (u1 u2 : U) (next : call) : Set :=
+  Unify { call_unify :> call }.
+Canonical Unification (U : sType) u := @Unify U u u Call Call.
 
-HB.lock Definition support {T} (F : finpred T) :=
-  undup (filter (finpred_pred F) (envelope F)).
-Canonical support_unlockable := Unlockable support.unlock.
+Variant hint : Set := Hint.
 
-Lemma support_uniq T F : uniq (@support T F).
-Proof. by rewrite support.unlock undup_uniq. Qed.
-#[export] Hint Resolve support_uniq : core.
+Definition PostTyped fail (U : uType) of U & call : hint := fail Unmatchable.
+Definition FailHead of unmatched := Hint.
+Notation PostTypeHint fail U u := (PostTyped fail U u Call).
+Definition fixFail fail := unify FailHead fail Call.
 
-Lemma mem_support T F : @support T F =i F.
-Proof.
-case: F => F [s sFs] x.
-by rewrite support.unlock mem_undup mem_filter; apply/andb_idr/sFs.
-Qed.
-Local Definition inE := (mem_support, inE).
+Definition TryTypeArity of uType := Hint.
+Definition TryForallArity (U : uType) of call := TryTypeArity U.
+Definition TryNotSubtype (U : uType) of U := TryForallArity U.
+Definition SuptypeHint (U : uType) (u : U) := TryNotSubtype U u Call.
 
-Lemma eq_support T (F1 F2 : finpred T) :
-  F1 =i F2 <-> perm_eq (support F1) (support F2).
-Proof.
-split=> [eqF | /perm_mem-eqF x]; last by rewrite -!mem_support.
-by apply/uniq_perm=> // x; rewrite !inE.
-Qed.
+Structure suptypePattern (S : uType) : sType :=
+  SuptypePattern { suptype_hint :> hint}.
+Canonical TypeArity@{i | i < u} :=
+  SuptypePattern Type@{i} (TryTypeArity Type@{i}).
+Canonical ForallArity (V0 V : uType) :=
+  fun (U0 : V0 -> uType) (A : V -> uType) =>
+  fun (pA : V0 -> forall v, suptypePattern (A v)) =>
+  fun uni : unify (fun v0 v => TryForallArity (U0 v0) Call) pA Call =>
+  SuptypePattern (forall v, A v) (TryForallArity (forall v0, U0 v0) uni).
+Canonical NoSuptypePattern (A U : uType) (u : U) (hu : U -> call -> hint) :=
+  fun fail (fix : fixFail fail) =>
+  fun (uni : unify (PostTypeHint ff U u) (hu u pff)) =>
+  SuptypePattern A (TryNotSubtype U u uni).
 
-Structure appliedFinpredMatch T (finT := finpred T) (x : T)
-   (F : finT) (Px : matchedArg bool) (Px1 : bool) (F1 : finT) :=
-  AppliedFinpredMatch {applied_finpred_pilot : finpredPilot}.
+Definition TryOfForallSubtype (U : uType) of U & U & hint := NowUnify.
+Definition TryOfPropSubtype (U : uType) u1 u2 :=
+  TryOfForallSubtype U u1 u2 NowUnify.
+Definition TryOfTypeSubtype := TryOfPropSubtype.
+Definition TryOfSameType := TryOfTypeSubtype.
 
-Structure coercedFinpredApp T (F : finpred T) (x : T) :=
-  PackCoercedFinpredApp { apply_coerced_finpred :> bool }.
-   (* app_of_coerced_finpred == finpred_pred F x *)
-Notation CoercedFinpredApp A x :=
-   (PackCoercedFinpredApp A x ((A : {pred _}) x)).
-Canonical ManifestCoercedFinpredApp T F x :=
-  PackCoercedFinpredApp F x (@finpred_pred T F x).
-Canonical ManifestCoercedApplyFinpredApp T F x :=
-  PackCoercedFinpredApp F x (@apply_finpred T x F).
+Structure ofSubtype (U : uType) (u1 u2 : U) :=
+  OfSubtype { ofSubtype_hint :> hint }.
+Canonical OfSameType (U : uType) u1 u2 :=
+  OfSubtype U u1 u2 (TryOfSameType U u1 u2).
+Canonical OfTypeSubType@{i j | i < j, j < u} (U1 U2 : Type@{i}) :=
+  OfSubtype Type@{j} U1 U2 (TryOfTypeSubtype Type@{i} U1 U2).
+Canonical OfPropSubType@{j | j < u} (P1 P2 : Prop) :=
+  OfSubtype Type@{j} P1 P2 (TryOfTypeSubtype Prop P1 P2).
+Canonical OfForallSubtype (V : uType) (U0 U : V -> uType) u01 u02 u1 u2 :=
+  fun pU : forall v, ofSubtype (U v) (u1 v) (u2 v) =>
+  fun uni : unify (fun v => TryOfTypeSubtype (U0 v) (u01 v) (u02 v)) pU =>
+  let hU := TryOfForallSubtype (forall v, U0 v) u01 u02 uni in
+  OfSubtype (forall v, U v) u1 u2 hU.
 
-Definition InferredFinpred := @Finpred.
-Arguments InferredFinpred {T} P E : rename.
-Notation "P" := (InferredFinpred P _) : coerced_scope.
+Example RigidReplace {U0 U : uType} : absT -> U0 -> U -> U0. Proof. by []. Qed.
+Definition NonRigidReplace {U0 U : uType} := @RigidReplace U0 U.
+Structure rigidOpExpr {U : uType} (t : absT) (u : U) : uType :=
+  RigidOpExpr { rigidOp_expr : U }.
+Add Printing Constructor rigidOpExpr.
+Arguments rigidOp_expr {U t u} _.
+Arguments RigidOpExpr {U} t u _.
 
-Structure inferFinpred (T : eqType) (P : {pred T}) (F : finpred T) :=
-  InferFinpred { finpred_pilot :> bool }. (* mem_finpred F == P *)
+Definition nonRigidSource := @id uType.
+Definition nonRigidTarget := @id uType.
+Coercion HideRigid {U : uType} (u : nonRigidSource U) : nonRigidTarget U := u.
+Arguments HideRigid / {U} u.
 
-Definition TryFinType := @id bool.
-Definition TryIfThenElse (mb : matchedArg bool) := TryFinType.
-Definition TryOp := TryIfThenElse.
-Definition TryFalse b := TryOp (MatchedArg b) b.
+Variant appFun (F : uType) : uType := AppFun of F.
+Notation get_fun F af := (let: AppFun f := af return F in f).
+Arguments AppFun {F} _.
 
-Canonical MatchCoercedFinpred T F x eFx (m : matchArg) :=
-  let Fx0 := @apply_coerced_finpred T F x eFx in
-  let Fx1 := finpred_pred F x in
-  AppliedFinpredMatch x F (m Fx0) (TryFalse Fx1) F TryCoercedFinpred. 
+Structure appArg (V F : uType) (af : appFun F) := AppArg { app_arg : V }.
+Canonical InferAppArg V F f v := AppArg V F (AppFun f) v.
+Arguments appArg V {F} af.
+Arguments app_arg {V F af} _.
 
-Canonical MatchInferredFinpred T F x P E eF (m : matchArg) :=
-  let Fx := @finpred_pilot T P F eF in
-  let etaF := InferredFinpred (finpred_pred F) (envelope F) in
-  AppliedFinpredMatch x (InferredFinpred P E) (m (P x)) Fx etaF TryInferFinpred.
+Structure body (U : uType) : uType := Body { get_body : U }.
+Canonical InferBody (U : uType) u := Body U u.
+
+Structure returnType := Return { return_Type :> uType }.
+Canonical InferReturn (U : uType) := Return U.
+
+Definition TryReplaceBodyVar@{i} (V : Type@{i}) := @id hint.
+Definition TryUseBodyVar V := TryReplaceBodyVar V NowUnify.
+Definition TryHideBodyVar := TryUseBodyVar.
+
+CoInductive waste : sType :=
+| Waste0
+| Waste1 {U : uType} of U
+| WasteF {V : uType} of V -> waste
+| Waste2 of waste & waste
+| Waste4 of waste & waste & waste & waste.
+
+Variant result : sType := Result (rec : hint) (U : uType) (u : U).
+
+Structure subst (t0 t : absT) (w : waste) : sType :=
+  Subst { subst_hint :> hint; #[canonical=no] subst_result :> result}.
+Arguments subst_result {t0 t w} _.
+Definition TryImpredicative (U : uType) := @id U.
+Definition TryPredicative := TryImpredicative.
+Definition TryForall (U : uType) of U := @id hint.
+Definition TryFun (U : uType) u := TryForall U (TryPredicative U u).
+Definition TryMaskRigid := TryFun.
+Definition TryIf (U : uType) of U := @id hint.
+Definition TryApplication := TryIf.
+Definition TryReplace := TryApplication.
+Definition TrySubstVar := TryReplace.
+Definition TryConstant := TrySubstVar.
+Definition AppHint (U : uType) u := TryApplication U u NowUnify.
+Definition HeadHint (U : uType) (au : appFun U) :=
+  let: AppFun u := au in TryConstant U u (TryIf U u NowUnify).
+Definition ArgHint (U : uType) u :=
+  TryConstant U u (TryIf U u (TryMaskRigid U u NowUnify)).
+
+Structure subsumeProp : sType :=
+  SubsumeProp {subsume_Prop :> uType; Prop_subsumption : Prop -> subsume_Prop}.
+Canonical PropProp := SubsumeProp Prop id.
+Canonical PropSet := SubsumeProp Set id.
+Canonical PropType@{i} := SubsumeProp Type@{i} id.
+
+Structure forallPattern@{i} (S S0 : uType) (V0 : Type@{i}) (R0 : V0 -> S)
+                            : sType :=
+  ForallPattern {
+    forall_pattern : S0;
+    #[canonical=no] pack_forall (V : Type@{i}) : (V -> S) -> packed
+  }.
+Arguments pack_forall {S S0 V0 R0} _ V _.
+
+Canonical PredicativeForall@{i} (S : uType := Type@{i}) (V0 : S) R0 :=
+  let pR0 : S := TryPredicative S (forall v0, R0 v0 : S) in
+  let packS (V : S) R := Pack S (forall v, R v : S) in
+  ForallPattern@{i} S S V0 R0 pR0 packS.
+Canonical ImpredicativeForall@{i} (S0 : subsumeProp) (V0 : Type@{i}) P0 :=
+  let pR0 := TryImpredicative S0 (Prop_subsumption S0 (forall v0, P0 v0)) in
+  let packS (V : Type@{i}) P := Pack Prop (forall v, P v : Prop) in
+  ForallPattern@{i} Prop S0 V0 P0 pR0 packS.
+
+Section SubstInstances.
+Variables t0 t : absT.
+
+Notation subst := (subst t0 t).
+Notation Subst := (Subst t0 t).
+
+Variant pattern : sType := Pattern of hint & result.
+Coercion SubstPattern w (p : subst w) := Pattern p p.
+
+Canonical Constant (U : uType) u :=
+  Subst (Waste1 u) (TryConstant U u NowUnify) (Result NowUnify U u).
+
+Canonical SubstVar (U : uType) (u0 u : U) (pu : ofSubtype U u0 u) :=
+  fun pt : unify (TryOfSameType absT t0 t) pu =>
+  Subst Waste0 (TrySubstVar U u0 pt) (Result NowUnify U u).
+
+Canonical Replace (U0 U : uType) u0 u :=
+  Subst Waste0 (TryReplace U0 (RigidReplace t0 u0 u) NowUnify)
+        (Result NowUnify U u).
+
+Canonical MaskRigid (U0 U : uType) u0 u pu0 w (pu : subst w) :=
+  fun uni : unify (Pattern (AppHint U0 u0) (Result NowUnify U u)) pu =>
+  Subst w (TryMaskRigid U0 (@rigidOp_expr U0 t0 u0 pu0) NowUnify)
+          (Result uni U u).
+
+Variant ifData := IfData (pR : bool -> pattern) (pb put puf : pattern).
+Canonical IfThenElse@{i} (U0 : Type@{i}) (R0 R : bool -> Type@{i}) :=
+  fun u0 fu0 => let hu0 := PostTypeHint fu0 U0 u0 in
+  fun b0 u0t u0f => let u0b := if b0 return R0 b0 then u0t else u0f in
+  fun mu0 (pfu0 : unifyPost fu0) (uni0 : unify hu0 (mu0 u0b pfu0)) =>
+  fun wR (pR : forall b, subst (wR b)) b wb (pb : subst wb) =>
+  fun ut wt (put : subst wt) uf wf (puf : subst wf) =>
+  let hR b1 :=
+    Pattern (ArgHint Type@{i} (R0 b1)) (Result NowUnify Type@{i} (R b1)) in
+  let hb := Pattern (ArgHint bool b0) (Result NowUnify bool b) in
+  let hu b1 u0 u := Pattern (ArgHint (R0 b1) u0) (Result NowUnify (R b1) u) in
+  let h := IfData hR hb (hu true u0t ut) (hu false u0f uf) in
+  fun uni : unify h (IfData pR pb put puf) =>
+  let u := Result uni (R b) (if b return R b then ut else uf) in
+  Subst (Waste4 (WasteF wR) wb wt wf) (TryIf U0 u0 uni0) u.
+
+Canonical HideBodyVar@{i} (VV : Type@{i}) (VR : VV -> Type@{i}) :=
+  let V : Type@{i} := forall v, VR v in
+  fun wf : V -> waste => let w := Waste2 (WasteF wf) (WasteF wf) in
+  let bv v0 v := Body V (HideRigid v) in
+  Subst w (TryHideBodyVar V) (Result NowUnify (V -> V -> body V) bv).
+
+Canonical UseBodyVar@{i} (V : Type@{i}) (wf : V -> waste) :=
+  let w := Waste2 (WasteF wf) (WasteF wf) in
+  Subst w (TryUseBodyVar V) (Result NowUnify (V -> V -> body V) (fun=> Body V)).
+
+Canonical ReplaceBodyVar@{i} (V0 V : Type@{i}) wV wf :=
+  let w := Waste2 (Waste2 wV wf) (WasteF (fun v : V => wf)) in
+  let hV := Pattern (@ArgHint Type@{i} V0) (Result NowUnify Type@{i} V) in
+  fun (pV : subst wV) (uni : unify hV pV) =>
+  let bv v0 v := Body V0 (NonRigidReplace t v0 v) in
+  Subst w (TryReplaceBodyVar V0 uni) (Result NowUnify (V0 -> V -> body V0) bv).
+
+Variant funData : sType :=
+  FunData (V0 V : uType) of pattern & V0 -> V -> pattern.
+Arguments FunData {V0 V} _ _.
+
+Definition FunPattern@{i}
+    {V0 V : Type@{i}} {R0 : V0 -> uType} {R : V -> uType} :=
+  fun f bv0 (bf0 : forall v0, body (R0 v0)) (v0 : V0) (v : V) =>
+  let: Body v1 := bv0 v0 v in let: Body u := bf0 v1 in
+  Pattern (ArgHint (R0 v1) u) (Result NowUnify (R v) (f v)).
   
-Canonical MatchAppliedFinpred T x F Px eF :=
-  let iF := @applied_finpred_pilot T x F (MatchedArg Px) (TryFalse Px) F eF in
-  AppliedFinpred x F iF Px.
+Canonical Fun@{i} (V0 V : Type@{i}) (R0 : V0 -> uType) (R : V -> uType) :=
+  fun f0 f bv0 bf0 (pbf0 : forall v0, body (bf0 v0)) =>
+  let hf := FunPattern f bv0 bf0 in
+  let pf0 v0 : R0 v0 := get_body (pbf0 v0) in
+  fun uni_f0 : unify f0 pf0 =>
+  let hV :=
+    Pattern (TryHideBodyVar V0) (Result NowUnify (V0 -> V -> body V0) bv0) in
+  fun w wf (pV : subst (Waste2 w (@WasteF V wf))) =>
+  fun pf : V0 -> forall v : V, subst (wf v) =>
+  fun uni : unify (FunData hV hf) (FunData pV pf) =>
+  Subst w (TryFun (forall v0, R0 v0) f0 uni_f0)
+                  (Result uni (forall v, R v) f).
 
-Variant finpredTarget (T : eqType) :=
-  FinpredTarget (P0 P1 P2 : {pred T}) of finpred T.
-#[reversible=yes, warnings="-uniform-inheritance"] 
-Coercion target_of_finpred T P (F : finpred T) :=
-  FinpredTarget P P (fun x => TryFalse (P x)) F.
-#[reversible=no, warnings="-uniform-inheritance -ambiguous-paths"]
-Coercion pred_finpred_target T P F eF P0 :=
-  @FinpredTarget T P0 P (fun x => @finpred_pilot T P F (eF x)) F.
+Canonical Forall@{i} (V0 V : Type@{i}) (S0 S : uType) R0 U bR0 R bv0 :=
+  fun pbR0 : forall v0, markBody (bR0 v0) =>
+  let pR0 v0 : S := unmark_body (pbR0 v0) in
+  let hV := Pattern (TryHideBodyVar V0) (Pack (V0 -> V -> body V0) bv0) in
+  fun w wR (pV : subst (Waste2 w (@WasteF V wR))) =>
+  let hR := FunPattern R bv0 bR0 in
+  fun pR : V0 -> forall v : V, subst (wR v) =>
+  fun uni : unify (FunData R0 hV hR) (FunData pR0 pV pR) =>
+  Subst w (TryForall S0 (forall_pattern S S0 V0 R0 U) uni) (pack_forall U V R).
 
-Structure labeledFinpred T :=
-  LabelFinpred {#[reversible=no] unlabel_finpred :> finpred T}.
-Add Printing Constructor labeledFinpred.
-Canonical LabelInferredFinpred T P E :=
-  LabelFinpred (@InferredFinpred T P E).
-Canonical LabelCoercedFinpred T F := @LabelFinpred T F.
+Variant packedApp : sType :=
+  PackedApp (V : uType) (oR : V -> uType) (fR : V -> frozen -> uType)
+            (R : V -> uType) (af : appFun (forall v, R v)) (av : appArg V af).
 
-Structure finpredPattern (T : eqType) (phT : phant T) :=
-  PackFinpredPattern {finpred_of_pattern :> labeledFinpred T}.
-Definition FinpredPattern {T} := @PackFinpredPattern T (Phant T).
-Notation "{ 'finpred' T }" := (finpredPattern (Phant T))
-   (at level 0, T at level 100, format "{ 'finpred'  T }") : type_scope.
-Canonical InferredFinpredPattern T P eF :=
-  FinpredPattern (@LabelInferredFinpred T P eF).
-Notation "P" := (@InferredFinpredPattern _ P _) : coerced_scope.
+Variant appData : sType := AppData (V : uType) (R : V -> uType) of
+   V -> hint & packed & forall v, R v & packedApp & pattern & pattern.
+(* Arguments AppData {V rR} _ _ _ _ _ _. *)
 
-#[reversible=no]
-Coercion CoercedFinpredPattern T (F : finpred_source_class T) :=
-  FinpredPattern (LabelCoercedFinpred F).
-Canonical CoercedFinpredPattern.
-Canonical finpredPattern_predType (T : eqType) :=
-  PredType (fun (F : {finpred T}) x => apply_finpred x F).
+Canonical Application@{i} (V0 V : Type@{i}) (fV0 : frozen -> Type@{i}) :=
+  fun (uV0 : Type@{i} := Force fV0 V0) hR0v (hR0 := fun (_ : uV0) => hR0v) =>
+  fun (oR0 uR0 : uV0 -> uType) (fR0 : uV0 -> frozen -> uType) (R : V -> uType)=>
+  fun pR0 : forall v0, getArityPattern (fR0 v0) (oR0 v0) (uR0 v0) =>
+  fun (uF0 := forall v, uR0 v) (u0f : uF0) (af0 : appFun uF0) =>
+  fun av0 : appArg (fV0 Frozen) af0 => let u0v := app_arg av0 in
+  fun u0 (hu0 := Pack (fR0 u0v Frozen) u0) (pu0 := Pack (uR0 u0v) (u0f u0v)) =>
+  let ho0 := PackedApp uV0 oR0 fR0 uR0 af0 av0 in
+  fun (R0 : V0 -> uType) (f0 : forall v0, R0 v0) (v0 : V0) =>
+  let oaf0 := AppFun f0 in let oav0 := AppArg V0 (forall v, R0 v) oaf0 v0 in
+  let po0 := PackedApp V0 R0 (fun v0 _ => R0 v0) R0 oaf0 oav0 in
+  fun f (hf := Pattern (HeadHint f0) (Pack (forall v, R v) f)) =>
+  fun v (hv := Pattern (ArgHint v0) (Pack V v)) =>
+  fun wf wv (w := Waste2 wf wv) (pf : subst wf) (pv : subst wv) => 
+  fun uni : unify (AppData uV0 uR0 hR0 hu0 u0f ho0 hf hv)
+                  (AppData uV0 uR0 pR0 pu0 (app_fun af0) po0 pf pv) =>
+  Subst w (TryApplication (fR0 u0v Frozen) hR0v u0 uni) (Pack (R v) (f v)).
 
-Variant finpredPatternTarget (T : eqType) := FinpredPatternTarget of {pred T}.
-#[reversible=yes]
-Coercion target_of_finpred_pattern T phT (F : @finpredPattern T phT) :=
-   FinpredPatternTarget (fun x => apply_finpred x F).
-#[reversible=no, warnings="-uniform-inheritance"]
-Coercion finpred_pattern_target_of_pred (T : eqType) (P : {pred T}) :=
-  @FinpredPatternTarget T [eta P].
+End SubstInstances.
 
-Structure coerciblePredType T := CoerciblePredType {
-  coerciblePredType_sort :> Type;
-  #[canonical=no] coerce_sort_to_pred : coerciblePredType_sort -> {pred T}
+Structure target (V U : uType) : uType :=
+  PackTarget { target_fun :> V -> U; _ : hint}.
+Canonical Target {V U : uType} fg := PackTarget V U fg NowUnify.
+
+Structure targetHint (U : uType) (h : hint) : uType :=
+  TargetHint { hint_target : U }.
+Canonical InferTargetHint (U : uType) u := TargetHint U (ArgHint u) u.
+
+Structure substTarget {V : uType} (U : uType) (g : V -> absT) : uType :=
+  SubstTarget { _ : absT -> U; subst_target :> target V U }.
+Arguments SubstTarget {V U} g _ _.
+Canonical InferSubstTarget V U (f : absT -> U) (g : V -> absT) :=
+  fun h ph w (pf : forall t v, subst (g v) t w) =>
+  let pu v := hint_target U (h v) (ph v) in
+  let hf t v := Pattern (h v) (Pack U (f t)) in
+  fun uni : unify hf pf => SubstTarget g f (PackTarget V U pu uni).
+
+Structure comp {V U : uType} (f : absT -> U) (g : V -> absT) :=
+  Comp { comp_target :> substTarget U g }.
+Canonical FactorComp V U f g :=
+  @Comp V U f g (SubstTarget g f (Target (f \o g))).
+
+End HOpattern.
+
+Arguments RigidOpExpr {absT U} t u _.
+Arguments NonRigidReplace {absT U0 U} _ _ _.
+Arguments comp {absT V U} f g.
+
+Ltac DeclareRigidOp t0 u0 u := let v := fresh "v" in 
+  do [intro v; DeclareRigidOp t0 (u0 v) (u v) | exact (RigidOpExpr t0 u u0)].
+Notation DeclareRigidOp u0 := 
+  (fun T (t0 : T) => ltac:(DeclareRigidOp t0 u0 (NonRigidReplace t0 u0 u0)))
+  (only parsing).
+
+Canonical succn_rigid := DeclareRigidOp succn.
+Canonical pair_rigid U V := DeclareRigidOp (@pair U V).
+Canonical some_rigid U := DeclareRigidOp (@Some U).
+Canonical inl_rigid U V := DeclareRigidOp (@inl U V).
+Canonical inr_rigid U V := DeclareRigidOp (@inr U V).
+
+Canonical sig_rigid := DeclareRigidOp (@sig).
+Canonical sig2_rigid := DeclareRigidOp (@sig2).
+Canonical sigT_rigid := DeclareRigidOp (@sigT).
+Canonical sigT2_rigid := DeclareRigidOp (@sigT2).
+Canonical prod_rigid := DeclareRigidOp prod.
+Canonical seq_rigid := DeclareRigidOp seq.
+Canonical option_rigid := DeclareRigidOp option.
+Canonical sum_rigid := DeclareRigidOp sum.
+
+Lemma foo (D := fun T (_ : T) => True) Z (p1 : Z -> nat)
+  (Y := fun b1 b2 => {b0 | b1 || b0 || b2})
+  (* (valY := fun b1 b2 (y : Y b1 b2) => sval y) *)
+  (vY : forall b1 b2, Y b1 b2 -> bool) (valY := vY)
+  (inY := fun b1 b2 b0 (yP : b1 || b0 || b2) => Sub b0 yP : Y b1 b2)
+  (eq2 := fun n : nat => 2 == n)
+  (H : forall Pn pPn, D {pred nat} Pn /\ D (comp Pn p1) pPn
+          -> D {pred Z} pPn) :
+(*    D {pred Z} [pred z | valY false (p1 z == 2) (Sub true isT)]. *)
+   D {pred Z} [pred z | valY _ _ (if p1 z <= 4 as b return Y b (p1 z == 2)
+                  then HideRigid (Sub false isT :> Y true _) else inY false _ true isT)].
+Set Debug "unification".  
+Set Printing Coercions.
+(* Set Printing Existential Instances. *)
+Arguments Sub : clear implicits.
+Arguments Specif_sig__canonical__eqtype_SubType : clear implicits.
+apply: H.
+Print Canonical Projections rigidOp_expr.
+
+
+Set Printing All.
+Print Application.
+
+End Subst.
+
+PackTarget { target_fun :> V -> U; _ : T -> V -> call }.
+Canonical Target {T U V} (vu0 : V -> U) (tu : T -> U) :=
+  @PackTarget T U V vu0 (fun r v => Call (ArgHint (vu0 v)) (tu r))
+
+Definition AppKind {U} of U := Kind.
+Definition HeadKind {U} of U := Kind.
+Definition ArgKind {U} of U := Kind.
+
+Structure hint := Hint { hint_kind :> kind }.
+Notation NoHint := (Hint Kind).
+
+Inductive frame := Frame U & U & kind & seq frame.
+Notation stack := (seq frame).
+
+Section Execute. Context {T U V : Type}.
+Implicit Types (u : U) (tu : T -> U) (t r : T) (vt : V -> T) (s : stack).
+
+Definition Stack u k u0 s := Frame U u (k u0) s :: s.
+
+Structure step t r u s := Step { step_hint :> hint}.
+Structure run t r := Run { run_stack :> stack }.
+Structure initStack u := InitStack { init_arg : U; _ : stack; _ : U }.
+Structure call t r u u1 := Call { init_stack :> initStack u }.
+
+Structure target :=
+  Target { target_expr :> V -> U; _ : V -> U; _ : T -> V -> U }.
+Canonical BuildTarget f := Target f [eta f] (fun=> f).
+
+Structure subst vt r u := Subst { subst_in :> target }.
+Structure abstract vt tu := Abstract {abstract_in :> target}.
+
+Canonical EndRun t r := Run t r [::].
+Canonical StepRun t r u su (pu : step t r u su) (ps : run t r) :=
+  Run t r (Frame U u pu su :: ps).
+
+Canonical InitializeStack u0 u s := InitStack u u0 (Stack u ArgKind u0 s) u.
+Canonical RunCall t r u0 u u1 (pu : run t r) :=
+  Call t r u u1 (InitStack u u0 pu u1).
+Canonical RunSubst vt r u u1 (pu : forall v, call (vt v) r u u1) f0 f2 :=
+  Subst vt r u1 (Target f0 (fun v => init_arg u (pu v)) f2).
+Canonical RunAbstract vt tu (pu : forall r, subst vt r (tu r)) f0 :=
+  Abstract vt tu (Target f0 f0 (fun r => subst_in vt r (tu r) (pu r))).
+
+End Execute.
+
+Section SubstHints.
+Context {U : Type} (u0 : U) (pu : packedRigid).
+Implicit Types (u : U) (pu : packedRigid) (h : hint).
+Notation pu0 := (PackType u0).
+
+Definition TryApply pu0 pu1 pu2 h := h.
+Notation App h := (TryApply pu0 pu pu h).
+Canonical AppHint := App (Hint (AppKind u0)).
+
+Definition TryConstant u0 h := h.
+Definition TryReplace u0 h := h.
+Definition TryUnmask u0 h := h.
+Definition TryIf pu0 pu1 pu2 h := h.
+Notation Head h :=
+  (TryConstant u0 (TryReplace u0 (TryUnmask u0 (App (TryIf pu0 pu pu h))))).
+Canonical HeadHint := Head (Hint (HeadKind u0)).
+
+Definition TryMask u0 h := h.
+Definition TryLambda u0 pu1 pu2 h := h.
+Canonical ArgHint := Head (TryMask u0 (TryLambda u0 pu pu (Hint (ArgKind u0)))).
+
+End SubstHints.
+
+Section SubstInstances.
+Context {T U V : Type}.
+Context {vU : V -> Type} {vF : V -> rigidType} {bW : bool -> rigidType}.
+Implicit Types (t r : T) (u : U) (v : V).
+
+Canonical Constant t r u := Step t r u [::] (TryConstant u NoHint).
+
+Canonical Replace t r := Step t r r [::] (TryReplace t NoHint).
+
+Canonical Mask t r u u0 su pu0 :=
+  Step t r u (Stack u AppKind u0 su) (TryMask (rigidOp_expr t u0 pu0) NoHint).
+
+Canonical Unmask t r u := Step t r u [::] (TryUnmask (LockRigidOp t u) NoHint).
+
+Canonical Lambda t r f f0 sf ps :=
+  let s (x : V) := @Stack (vU x) (f x) ArgKind (f0 x) (sf x) in
+  let rs (x : V) := run_stack t r (ps x) in
+  Step t r f [::] (TryLambda [eta f0] (PackType s) (PackType rs) NoHint).
+
+Canonical IfThenElse t r u b0 vt0 vf0 b vt vf sb st sf :=
+  let stf := Stack vt ArgKind vt0 st ++ Stack vf ArgKind vf0 sf in
+  let u0 := if b0 return bW b0 then vt0 else vf0 in
+  let u' := if b return bW b then vt else vf in
+  Step t r u (Stack b ArgKind b0 sb ++ stf) (TryIf (PackRigid u0) u u' NoHint).
+
+Structure wrappedDfun {V} (vF : V -> rigidType) :=
+  WrappedFun {unwrap_fun :> forall v : V, vF v}.
+Notation wrappedFun V U := (wrappedDfun (fun _ : V => RigidType U)). 
+Arguments unwrap_fun {V vF} _.
+Arguments WrappedFun {V vF} _.
+Canonical WrapFun {V vF} f := @WrappedFun V vF f.
+
+Structure appArg (pf : wrappedDfun vF) (v0 : V) := PackAppArg {arg_of_app : V}.
+Canonical AppArg f0 v0 := PackAppArg (WrapFun f0) v0 v0.
+
+Canonical Application t r u f v f0 v0 u1f pf0 pv0 pu0 sf sv :=
+  let s := Stack f HeadKind f0 sf ++ Stack v ArgKind v0 sv in
+  let pu1 := @PackRigid (vF _) (u1f (arg_of_app pf0 f0 v0 pv0)) in
+  Step t r u s (TryApply pu0 pu1 pu0 u1f pf0 u (f v) NoHint).
+
+End SubstInstances.
+
+Lemma foo (D := fun T (_ : T) => True) (p1 : bool -> nat)
+  (H : forall Pn pPn, D {pred nat} Pn /\ D (abstract p1 Pn) pPn
+          -> D (nat -> {pred bool}) pPn) :
+   D (nat -> {pred bool}) (fun=> [pred b | p1 b < 4]).
+Set Debug "unification".   
+Set Printing Coercions.
+Unset Printing Records.
+apply: H.
+Set Printing All.
+Print Application.
+
+End Subst.
+
+Lemma foo (D := fun T (_ : T) => True) (p1 : bool -> nat)
+  (H : forall Pn pPn, D {pred nat} Pn /\ D (Subst.abstract p1 Pn) pPn
+          -> D (nat -> {pred bool}) (Subst.abstract_in p1 Pn pPn)) :
+   D (nat -> {pred bool}) (fun=> [eta [pred b | p1 b < 4]]).
+Set Debug "unification".   
+Set Printing Coercions.
+Unset Printing Records.
+refine (H _ _ _).
+Print Canonical Projections Subst.unwrap_fun.
+
+
+Module Export (coercions, canonicals) Subst.
+Unset Implicit Arguments.
+
+Structure rigidType := RigidType { rigidType_Type :> Type }.
+Canonical SemiflexibleType U := RigidType U.
+
+#[universes(polymorphic)]
+Variant packedRigid := PackRigid (T : rigidType) of T.
+Arguments PackRigid {T} _.
+#[universes(polymorphic)]
+Definition PackType {T} (x : T) := @PackRigid (RigidType T) x.
+
+Variant kind := Kind.
+Definition AppKind {U} of U := Kind.
+Definition HeadKind {U} of U := Kind.
+Definition ArgKind {U} of U := Kind.
+
+Structure hint := Hint { hint_kind :> kind }.
+Notation NoHint := (Hint Kind).
+
+Inductive frame := Frame U & U & kind & seq frame.
+Notation stack := (seq frame).
+
+Section Execute. Context {T U V : Type}.
+Implicit Types (u : U) (tu : T -> U) (t r : T) (vt : V -> T) (s : stack).
+
+Definition Stack u k u0 s := Frame U u (k u0) s :: s.
+
+Structure step t r u s := Step { step_hint :> hint}.
+Structure run t r := Run { run_stack :> stack }.
+Structure initStack u := InitStack { init_arg : U; _ : stack; _ : U }.
+Structure call t r u u1 := Call { init_stack :> initStack u }.
+
+Structure target :=
+  Target { target_expr :> V -> U; _ : V -> U; _ : T -> V -> U }.
+Canonical BuildTarget f := Target f [eta f] (fun=> f).
+
+Structure subst vt r u := Subst { subst_in :> target }.
+Structure abstract vt tu := Abstract {abstract_in :> target}.
+
+Canonical EndRun t r := Run t r [::].
+Canonical StepRun t r u su (pu : step t r u su) (ps : run t r) :=
+  Run t r (Frame U u pu su :: ps).
+
+Canonical InitializeStack u0 u s := InitStack u u0 (Stack u ArgKind u0 s) u.
+Canonical RunCall t r u0 u u1 (pu : run t r) :=
+  Call t r u u1 (InitStack u u0 pu u1).
+Canonical RunSubst vt r u u1 (pu : forall v, call (vt v) r u u1) f0 f2 :=
+  Subst vt r u1 (Target f0 (fun v => init_arg u (pu v)) f2).
+Canonical RunAbstract vt tu (pu : forall r, subst vt r (tu r)) f0 :=
+  Abstract vt tu (Target f0 f0 (fun r => subst_in vt r (tu r) (pu r))).
+
+End Execute.
+
+Section SubstHints.
+Context {U : Type} (u0 : U) (pu : packedRigid).
+Implicit Types (u : U) (pu : packedRigid) (h : hint).
+Notation pu0 := (PackType u0).
+
+Definition TryApply pu0 pu1 pu2 h := h.
+Notation App h := (TryApply pu0 pu pu h).
+Canonical AppHint := App (Hint (AppKind u0)).
+
+Definition TryConstant u0 h := h.
+Definition TryReplace u0 h := h.
+Definition TryUnmask u0 h := h.
+Definition TryIf pu0 pu1 pu2 h := h.
+Notation Head h :=
+  (TryConstant u0 (TryReplace u0 (TryUnmask u0 (App (TryIf pu0 pu pu h))))).
+Canonical HeadHint := Head (Hint (HeadKind u0)).
+
+Definition TryMask u0 h := h.
+Definition TryLambda u0 pu1 pu2 h := h.
+Canonical ArgHint := Head (TryMask u0 (TryLambda u0 pu pu (Hint (ArgKind u0)))).
+
+End SubstHints.
+
+Example LockRigidOp {T U} : T -> U -> U. Proof. by []. Qed.
+Definition MaskRigidOp {T U} := @LockRigidOp T U.
+Structure rigidOpExpr {T U} (t : T) (mu : U) :=
+  RigidOpExpr { rigidOp_expr : U }.
+Add Printing Constructor rigidOpExpr.
+
+Ltac DeclareRigidOp t mu u := let v := fresh "v" in 
+  do [ intro v; DeclareRigidOp t (mu v) (u v) | exact (RigidOpExpr _ _ t mu u)].
+Notation DeclareRigidOp u := 
+  (fun T (t : T) => ltac:(DeclareRigidOp t (MaskRigidOp t u) u)) (only parsing).
+
+Canonical succn_rigid := DeclareRigidOp succn.
+Canonical pair_rigid {U V} := DeclareRigidOp (@pair U V).
+Canonical some_rigid {U} := DeclareRigidOp (@Some U).
+Canonical inl_rigid {U V} := DeclareRigidOp (@inl U V).
+Canonical inr_rigid {U V} := DeclareRigidOp (@inr U V).
+
+Section SubstInstances.
+Context {T U V : Type}.
+Context {vU : V -> Type} {vF : V -> rigidType} {bW : bool -> rigidType}.
+Implicit Types (t r : T) (u : U) (v : V).
+
+Canonical Constant t r u := Step t r u [::] (TryConstant u NoHint).
+
+Canonical Replace t r := Step t r r [::] (TryReplace t NoHint).
+
+Canonical Mask t r u u0 su pu0 :=
+  Step t r u (Stack u AppKind u0 su) (TryMask (rigidOp_expr t u0 pu0) NoHint).
+
+Canonical Unmask t r u := Step t r u [::] (TryUnmask (LockRigidOp t u) NoHint).
+
+Canonical Lambda t r f f0 sf ps :=
+  let s (x : V) := @Stack (vU x) (f x) ArgKind (f0 x) (sf x) in
+  let rs (x : V) := run_stack t r (ps x) in
+  Step t r f [::] (TryLambda [eta f0] (PackType s) (PackType rs) NoHint).
+
+Canonical IfThenElse t r u b0 vt0 vf0 b vt vf sb st sf :=
+  let stf := Stack vt ArgKind vt0 st ++ Stack vf ArgKind vf0 sf in
+  let u0 := if b0 return bW b0 then vt0 else vf0 in
+  let u' := if b return bW b then vt else vf in
+  Step t r u (Stack b ArgKind b0 sb ++ stf) (TryIf (PackRigid u0) u u' NoHint).
+
+Structure wrappedDfun {V} (vF : V -> rigidType) :=
+  WrappedFun {unwrap_fun :> forall v : V, vF v}.
+Notation wrappedFun V U := (wrappedDfun (fun _ : V => RigidType U)). 
+Arguments unwrap_fun {V vF} _.
+Arguments WrappedFun {V vF} _.
+Canonical WrapFun {V vF} f := @WrappedFun V vF f.
+
+Structure appArg (pf : wrappedDfun vF) (v0 : V) := PackAppArg {arg_of_app : V}.
+Canonical AppArg f0 v0 := PackAppArg (WrapFun f0) v0 v0.
+
+Canonical Application t r u f v f0 v0 u1f pf0 pv0 pu0 sf sv :=
+  let s := Stack f HeadKind f0 sf ++ Stack v ArgKind v0 sv in
+  let pu1 := @PackRigid (vF _) (u1f (arg_of_app pf0 f0 v0 pv0)) in
+  Step t r u s (TryApply pu0 pu1 pu0 u1f pf0 u (f v) NoHint).
+
+End SubstInstances.
+
+Lemma foo (D := fun T (_ : T) => True) (p1 : bool -> nat)
+  (H : forall Pn pPn, D {pred nat} Pn /\ D (abstract p1 Pn) pPn
+          -> D (nat -> {pred bool}) pPn) :
+   D (nat -> {pred bool}) (fun=> [pred b | p1 b < 4]).
+Set Debug "unification".   
+Set Printing Coercions.
+Unset Printing Records.
+apply: H.
+Set Printing All.
+Print Application.
+
+End Subst.
+
+Lemma foo (D := fun T (_ : T) => True) (p1 : bool -> nat)
+  (H : forall Pn pPn, D {pred nat} Pn /\ D (Subst.abstract p1 Pn) pPn
+          -> D (nat -> {pred bool}) (Subst.abstract_in p1 Pn pPn)) :
+   D (nat -> {pred bool}) (fun=> [eta [pred b | p1 b < 4]]).
+Set Debug "unification".   
+Set Printing Coercions.
+Unset Printing Records.
+refine (H _ _ _).
+Print Canonical Projections Subst.unwrap_fun.
+
+Module Export (coercions, canonicals) Finpred.
+
+Implicit Types I T : eqType. (* We only work with eqTypes. *)
+
+(* Helper notation for the MatchArg utility (see ssreflect.v and ssrfun.v).   *)
+Import MatchArgNotation.
+
+(* Labels to distinguish the delimited and undelimited cases. The Delimited   *)
+(* label also isolates the predicate and argument. Variants of Undelimited    *)
+(* will be declared below to help recover from over-expansion.                *)
+Definition Delimited T (P : {pred T}) := P.
+Definition Undelimited (Px : bool) := Px.
+
+(* A unit type used to control the triggering of /= (simpl) simplification.   *)
+Variant simplTrigger := SimplTrigger.
+
+(* We need to use different structures to infer the (body of) the predicate   *)
+(* in the delimited case, which requires a default {pred T} projection, and   *)
+(* in the undelimited case, which requires a default bool projection. We      *)
+(* implement this by putting the necessary matchPred and matchBody structures *)
+(* OUTSIDE the finpred type, which is merely a record with a Finpred.pred     *)
+(* projection to {pred T} with no canonical instances.                        *)
+(*    We do NOT declare Finpred.pred as the finpred >-> pred_sort coercion;   *)
+(* instead we define Finpred.mem : finpred >-> matchPred, so finpred coerces  *)
+(* to {pred T} via the matched_pred : matchPred >-> pred_sort projection.     *)
+(*    In the delimited case, unifying A : {pred T} with ?F then leads to      *)
+(* unifying the default instance MatchAnyPred A with Finpred.mem ?F, which    *)
+(* will be resolved by inferring ?F. In the undelimited case, (x \in ?F) will *)
+(* reduce to matched_pred (Finpred.mem ?F) x and then further reduce to       *)
+(* matched_body (Finpred.pattern ?F x (Finpred.pred ?F x)) where matched_body *)
+(* is the bool projection of matchBody. Unifying this term with any Ax : bool *)
+(* will then similarly turn into unifying the default matchBody instance      *)
+(* MatchAnyBody ?F0 ?x0 ?u Ax with Finpred.pattern ?F x (Finpred.pred ?F x)   *)
+(* which will resolve by inferring A and F such that Finpred.pred F = A and   *)
+(* A x = ax, setting ?x0 := x and ?F0 := ?F := F (the delimited case also     *)
+(* this resolution internally).                                               *)
+(*   We ensure that Finpred.mem F : {pred T} simplifies to hook (fun=> id) A  *)
+(* when F is a concrete finpred instance for a predicate A, but does NOT      *)
+(* simplify when F is an abstract finpred ?F; this is achieved by adding a    *)
+(* simplTrigger parameter to the matchPred structure, which then gives its    *)
+(* {pred T} projection an additional simplTrigger argument to control its     *)
+(* simplification. This argument will be supplied by (the return type of)     *)
+(* Finpred.mem, which just projects it from the finpred record, thereby       *)
+(* ensuring that if will reduce to the SimplTrigger constructor exactly when  *)
+(* F is a concrete instance.                                                  *)
+ 
+(* The interface for feeding a delimited predicate to finpred inference.      *)
+(* After unifying P with matched_pred ?mP, which should always succeed, Coq   *)
+(* will infer a finpred F for P by unifying the delimited_pred projection of  *)
+(* Finpred.mem F with delimited_pred ?mP = [eta Delimited P], then verify     *)
+(* that F : {pred T} and P are convertible. As unification proceeds left to   *)
+(* right the order of the delimited_pred and matched_pred fields is important *)
+(* (indeed inference on the matched_pred projection value will immediately    *)
+(* fail as it lacks the Delimited label.                                      *)
+Structure matchPred (T : eqType) (t : simplTrigger) := MatchPred {
+   #[canonical=no] delimited_pred : {pred T}; (* [eta Delimited matched_pred] *)
+   #[reversible=yes] matched_pred :> {pred T} (* for finpred reverse coercion *)
 }.
-Coercion coerce_sort_to_pred : coerciblePredType_sort >-> pred_sort.
-Definition TryPredType := @id Type.
-Canonical PredTypeCoercible T (pT : predType T) :=
-  @CoerciblePredType T (TryPredType pT) (@topred T pT).
+Arguments matched_pred {T !t} _ /. (* simplify only when t ~> Trigger *)
+Canonical MatchAnyPred T t P := @MatchPred T t [eta Delimited P] P.
+(* The following are needed for Coq < 8.21 where default instances fail to    *)
+(* match when extraargs are present. Similar instances should be declared for *)
+(* every head constant of the topred projection of a canonical predType       *)
+(* instance that is not convertible to predPredType T. These can be listed by *)
+(*    Print Canonical Projections topred.                                     *)
+(* These extra instances are needed to ensure that finpred matching works     *)
+(* consistently in the delimited case, where Coq needs to unify (a \in A)     *)
+(* with (v \in ?F) where ?F : {finpred T} is an open evar. Expanding some of  *)
+(* the notation Coq is in fact unifying (in_mem a (@mem T pA A)) with         *)
+(*  in_mem v (@mem T (predPredType T) (Finpred.matched_pred (Finpred.mem ?F)) *)
+(* After unifying a with v, this will only attempt to unify A with            *)
+(* (Finpred.matched_pred (Finpred.mem ?F)) if pA, the predType instance for   *)
+(* the type of A, is convertible to (predPredType T). If not Coq will then    *)
+(* expand mem to expose the Mem constructor on both sides, and then try to    *)
+(* unify Mem [eta mA A], where mA is the topred projection of pA, with        *)
+(* Mem [eta Finpred.matched_pred (Finpred.mem ?F)], which leads to unifying   *)
+(* mA A x with Finpred.matched_pred (Finpred.mem ?F) x for a new variable x.  *)
+(* In this case the default MatchAnyPred instance above will NOT be used      *)
+(* because of the extra argument x, so we need to provide additional          *)
+(* instances, one for each possible mA.                                       *)
+Canonical MatchSimplPred T t sP := @MatchAnyPred T t (pred_of_simpl sP).
+Canonical MatchMemPred T t mP := @MatchAnyPred T t (pred_of_mem mP).
+Canonical MatchMemSeq T t s := @MatchAnyPred T t (mem_seq s).
 
-Definition LabeledFinpredReverseCoercion T pT P0 P & @finpredEnvelope T P :=
-  fun F0 => LabelFinpred (@reverse_coercion (finpred T) pT F0 P0).
-Canonical LabelFinpredReverseCoercion T pT P0 (F : finpred T) :=
-  @LabeledFinpredReverseCoercion T (TryPredType pT) P0 F (envelope F) F.
-Canonical FinpredReverseCoercionPattern (T : eqType) pT P0 eF :=
-  let F := Finpred (@coerce_sort_to_pred T pT P0) eF in
-  FinpredPattern (LabeledFinpredReverseCoercion P0 eF F).
-Notation "P0" := (@FinpredReverseCoercionPattern _ _ P0 _) : coerced_scope.
+(* The mixin type for Finpred.type; it provides an upper bound for the        *)
+(* support of the predicate projection. All mixin instances will be strictly  *)
+(* Qed opaque.                                                                *)
+Definition envelope T (P : {pred T}) := {Pbound : seq T | {subset P <= Pbound}}.
+Local Notation bpred := pred. (* Will be masked by finpred field name. *)
+Record finpred T := Pack {
+  trigger : simplTrigger; (* controls reduction of matched_pred (mem F) *)
+  pred : {pred T};        (* NOT a coercion to pred_sort *)
+  mixin : envelope pred
+}.
+Arguments mixin {T} A : rename, simpl never. (* Don't expose mixin subproofs. *)
+Definition Finpred := Pack^~ SimplTrigger.
+Arguments Finpred {T} P e : rename.
 
-Program Definition finpred0 T := @Finpred T pred0 _.
+(* We support two strategies for inferring a finpred: either we recognize a   *)
+(* coercion to {pred T} from a finite container type that coerces to finpred, *)
+(* such as seq T or {set T}, in which case we just return that coercion, or   *)
+(* we first decompose the boolean expression Px as the application of a       *)
+(* predicate P : {pred T} to the argument variable x of the finpred, then     *)
+(* traverse P x to infer a finpred F for P. We use the canonical projections  *)
+(* to the strategy type declared here to select the strategy to be used.      *)
+Variant strategy := TryInferred.
+Definition TryContainer := TryInferred. (* Try a container coercion first. *)
+
+(* The memContainer structure is the interface for recognizing membership in  *)
+(* a finite container C whose type cT coerces both to {pred T} and finpred.   *)
+(* The in_container projection will match applications (C : {pred T}) x of    *)
+(* the predicate coercion of C to the variable parameter x, while the F       *)
+(* parameter will be used to return the coercion of C to {finpred T}.         *)
+(*  Usage: for every type cT that coerces to both {pred T} and {finpred T}    *)
+(* declare Canonical cT_Container ... (C : cT ....) := Finpred.Container A.   *)
+Structure memContainer T (A : finpred T) (x : T) :=
+  MemContainer { in_container :> bool }. (* in_container ~=~ pred F x *)
+Notation Container C := (fun x => MemContainer C%FUN x ((C%FUN :> {pred _}) x)).
+
+(* The instances of finpred produced by inference that are not just coercions *)
+(* from a finite container type (e.g., finpred_of_seq s) will be of the form  *)
+(*   F = Finpred.Inferred F0 (Finpred.Cast P)                                 *)
+(* where P is the original predicate and F0 the finpred record inferred by    *)
+(* traversing by P x; the type of Inferred ensures that pred_of F0 = P.       *)
+(* As Inferred and Cast will be declared as coercions, F will display as P.   *)
+Definition cast_source T := {pred T}.
+Variant cast {T} : cast_source T -> Type := Cast P : cast P.
+Coercion Cast : cast_source >-> cast.
+#[warning="-uniform-inheritance"]
+Coercion Inferred T (A0 : finpred T) (cast_P : cast (pred A0)) :=
+  let transport rT f := let: Cast P in cast P := cast_P return rT P in f P in
+  transport (fun P => envelope P -> finpred T) (Pack SimplTrigger) (mixin A0).
+Arguments Inferred {T} A0 cast_P.
+
+(* The matchBody structure provides the interface to the unification-based    *)
+(* finpred inference algorithm, in addition to a projection to bool with a    *)
+(* default instance that will allow us to feed an arbitrary expression to the *)
+(* inference algorith, and also serves as a final check that that initial     *)
+(* expression is indeed convertible to the inferred finpred applied to the    *)
+(* given variable. That interface consists of the inferred finpred, the fresh *)
+(* variable the finpred is applied to, and a hint to direct the inference     *)
+(* strategy. When performing inference the inferred finpred will be an evar   *)
+(* that does NOT have the variable in its scope.                              *)
+Structure matchBody T := MatchBody {
+  #[canonical=no] inferred_finpred : finpred T;
+  #[canonical=no] pred_variable : T;
+  #[canonical=no] inference_strategy : strategy;
+  matched_body :> bool
+}.
+
+(*   The hook composition specialized to T -> bool -> bool and {pred T},      *)
+(* to be displayed as a {pred T} >-> {pred T} coercion. Similarly to linear   *)
+(* composition f \o g we ensure it is expanded by /= when fully applied.      *)
+(*   The identity coercion mentioned in the main header will in fact be       *)
+(* hook (fun=> id).                                                           *)
+Definition hook_source T := {pred T}.
+#[warning="-uniform-inheritance"]
+Coercion hook {T} op (P : hook_source T) : {pred T} := fun x => op x (P x).
+Arguments hook {T} op P x /.
+Lemma hookE T (P : {pred T}) : hook (fun=> id) P = P. Proof. by []. Qed.
+
+(* The matchBody and matchPattern instances that connect an unknown finpred   *)
+(* application to the inference algorithm.                                    *)
+Definition pattern {T} (A : finpred T) x Ax := MatchBody A x TryContainer Ax.
+(* The first occurrence of P is used to infer F in the delimited case, the    *)
+(* second one to infer F in the undelimited case.                             *)
+#[reversible=yes, warning="-uniform-inheritance"]
+Coercion mem {T} (A : finpred T) :=
+  let P_A := hook (fun x Ax => matched_body (pattern A x Ax)) (pred A) in
+  MatchPred (trigger A) P_A P_A.
+
+Canonical FinpredContainer T (A : finpred T) := Container A.
+Canonical PredFinpredContainer T A x := @MemContainer T A x (pred A x).
+
+(* The exact computation of the support from the mixin data is hidden by a    *)
+(* submodule signature that uses the finpred >-> pred_sort coercion.          *)
+Module Type SupportSignature.
+Parameter seq : forall {T}, finpred T -> seq T.
+Axiom uniq : forall {T} A, uniq (@seq T A).
+Axiom mem : forall {T} A, @seq T A =i A.
+End SupportSignature.
+
+Module Support : SupportSignature.
+Definition seq T (A : finpred T) := undup (filter [in A] (sval (mixin A))).
+Lemma uniq T (A : finpred T) : uniq (seq A). Proof. exact: undup_uniq. Qed.
+Lemma mem T (A : finpred T) : seq A =i A.
+Proof.
+by case: A => t P [b bP] x; rewrite mem_undup mem_filter; apply/andb_idr/bP.
+Qed.
+End Support.
+
+Notation support := Support.seq.
+
+Lemma eq_support T (A B : finpred T) :
+  A =i B <-> perm_eq (support A) (support B).
+Proof.
+split=> [eqAB | /perm_mem-eqAB x]; last by rewrite -!Support.mem.
+by apply/uniq_perm=> [||x]; rewrite ?Support.uniq // !Support.mem eqAB.
+Qed.
+
+(* Some basic finpred instances; except for the finpred_of_seq coercion, none *)
+(* of these should be returned directly by finpred inferrence; instead, they  *)
+(* are the building blocks use to construct the first argument of Inferred.   *)
+
+Program Definition finpred0 {T} := @Finpred T pred0 _.
 Next Obligation. by exists nil. Qed.
-Canonical Finpred0 T := InferFinpred pred0 (finpred0 T) (TryFalse false).
 
-Program Definition finpred1 T a := @Finpred T (pred1 a) _.
+Program Definition finpred1 {T} a := @Finpred T (pred1 a) _.
 Next Obligation. by exists [:: a] => x; rewrite inE. Qed.
 
-Program Definition finpred1x T a := @Finpred T [pred x | a == x] _.
+Program Definition finpred1x {T} a := @Finpred T [pred x | a == x] _.
 Next Obligation. by exists [:: a] => x; rewrite inE eq_sym. Qed.
 
-Program Definition finpredU T (A B : finpred T) := @Finpred T [predU A & B] _.
+Program Definition finpredOr {T} (A B : finpred T) :=
+  @Finpred T [predU A & B] _.
 Next Obligation.
-by exists (support A ++ support B) => x; rewrite mem_cat !mem_support.
+by exists (support A ++ support B) => x; rewrite mem_cat !Support.mem.
 Qed.
 
-Program Definition finpredIr T (A : finpred T) (P : pred T) :=
-  @Finpred T [pred x in A | P x] _.
-Next Obligation. by exists (support A) => x /andP[]; rewrite mem_support. Qed.
-
-Program Definition finpredIl (T : eqType) (P : pred T) (A : finpred T) :=
-  @Finpred T [pred x | P x & x \in A] _.
-Next Obligation. by exists (support A) => x /andP[]; rewrite mem_support. Qed.
-
-Program Definition finpred_leq n := @Finpred nat [pred m | m <= n] _.
-Next Obligation. by exists (iota 0 n.+1) => m; rewrite mem_iota. Qed.
-
-Program Definition finpredUx T (A B : finpred T) :=
+Program Definition finpredXor {T} (A B : finpred T) :=
   @Finpred T [pred x | (x \in A) (+) (x \in B)] _.
 Next Obligation.
-exists (support (finpredU A B)) => x; rewrite mem_support !inE.
+exists (support (finpredOr A B)) => x; rewrite Support.mem !inE.
 by case: (x \in A).
 Qed.
 
-Program Definition finpredIf (T : eqType) (P : pred T) (A B : finpred T) :=
+Program Definition finpredAndr {T} (A : finpred T) (P : bpred T) :=
+  @Finpred T [pred x in A | P x] _.
+Next Obligation. by exists (support A) => x /andP[]; rewrite Support.mem. Qed.
+
+Program Definition finpredAndl {T} (P : bpred T) (A : finpred T) :=
+  @Finpred T [pred x | P x & x \in A] _.
+Next Obligation. by exists (support A) => x /andP[]; rewrite Support.mem. Qed.
+
+Program Definition finpredIf {T} (P : bpred T) (A B : finpred T) :=
   @Finpred T [pred x | if P x then x \in A else x \in B] _.
 Next Obligation.
-exists (support (finpredU A B)) => x; rewrite mem_support !inE.
+exists (support (finpredOr A B)) => x; rewrite Support.mem !inE.
 by case: ifP => _ ->; rewrite ?orbT.
 Qed.
 
-Program Definition finpredIfr T (A : finpred T) (P : pred T) (B : finpred T) :=
+Program
+Definition finpredIfl {T} (A : finpred T) (P : bpred T) (B : finpred T) :=
   @Finpred T [pred x | if x \in A then P x else x \in B] _.
 Next Obligation.
-by exists (support (finpredU A B)) => x; rewrite mem_support !inE; case: ifP.
+by exists (support (finpredOr A B)) => x; rewrite Support.mem !inE; case: ifP.
 Qed.
 
-Fixpoint envelope_of_seq {T} (s : seq _) : finpredEnvelope [pred x in s] :=
-  if s isn't x :: s' then envelope (finpred0 T) else
-  envelope (finpredU (finpred1 x) (Finpred _ (envelope_of_seq s'))).
+Program Definition finpredLeq n := Finpred [pred m | m <= n] _.
+Next Obligation. by exists (iota 0 n.+1) => m; rewrite mem_iota. Qed.
+
+Definition seqEnvelope {T} (s : seq T) := envelope s.
+Coercion PackSeqEnvelope {T} s (e : @seqEnvelope T s) := Pack SimplTrigger e.
+Fixpoint envelope_of_seq {T} (s : seq T) : seqEnvelope s :=
+  if s isn't a :: s' then mixin (@finpred0 T) else
+  mixin (finpredOr (finpred1 a) (envelope_of_seq s')).
 #[warnings="-uniform-inheritance"]
-Coercion finpred_seq T s := Finpred _ (@envelope_of_seq T s).
+Coercion finpred_of_seq T s : finpred T := @envelope_of_seq T s.
 #[warnings="-uniform-inheritance"]
-Coercion finpredPattern_seq T s := @CoercedFinpredPattern T (s : seq T).
-Canonical CoercedFinpred_seq (T : eqType) (s : seq T) x :=
-  CoercedFinpredApp s x.
+Coercion envelope_of_seq : seq >-> seqEnvelope.
+Canonical SeqContainer T (s : seq T) x := Container s x.
 
-Structure labeled_bool := LabelBool {unlabel_bool :> bool}.
-Add Printing Constructor labeled_bool.
-Structure op_finpred {T : eqType} (P : pred T) (A : finpred T) :=
-  OpFinpred {opFinpred_pilot :> labeled_bool}.
-Add Printing Constructor op_finpred.
-Canonical InferOpFinpred T P A (m : matchArg) (eA : @op_finpred T P A) b :=
-  @InferFinpred T P A (TryOp (m (eA : bool)) b).
+(* The structures inferenceProblem, infer, inferOp and matchOp comprise the   *)
+(* main interfaces for the recursive inference algorithm.                     *)
+(*  - inferenceProblem is the toplevel entry point; unifying the nine         *)
+(*    parameters of inferenceProblem specified by the canonical matchBody     *)
+(*    instance with the values expected by a canonical instance for its       *)
+(*    strategy projection will effectuate the hint's strategy.              *)
+(*  - infer is the main recursive entrypoint; it infers a finpred A for a     *)
+(*    predicate P guided by a stepHint value.                                 *)
+(*  - matchOp is the main branch entry; it proposes candidates for A based on *)
+(*    the head constant of the body of P, be it a boolean connective of a     *)
+(*    fixed predicate such as <=.                                             *)
+(*  - inferOp completes matchOp by selecting an appropriate candidate amongst *)
+(*    those proposed by matchOp and calling infer recursively on arguments if *)
+(*    matchOp has identified a connective. A inferOp uses the actual value of *)
+(*    it can test for constant subexpressions.                                *)
+(* There are additional structures defined below to handle finite preimages   *)
+(* and predicates over dependent pair (sigma) types.                          *)
 
-Definition LabelBinop {T : eqType}
-  (op : bool -> bool -> bool) (P P1 : pred T) (a b : bool) := 
-  fun F : forall A B : finpred T, finpred T => @id labeled_bool.
-Definition LabelOneBinop {T : eqType} (P : pred T) a b op F :=
-  @LabelBinop T op P P (TryFalse a) (TryFalse b) F (LabelBool (op a b)).
-Fixpoint LabelManyBinop {T : eqType} (P : pred T) a b op0 Fs :=
-  if Fs isn't (op, F) :: Fs' then LabelBool (op0 a b) else
-  LabelBinop op P P (TryFalse a) (TryFalse b) F (LabelManyBinop P a b op0 Fs').
+Variant constraint := Fail.
+Variant constraintTrigger := TriggerConstraint.
 
-Canonical InferBinFinpred {T : eqType} (PQ : (pred T)) op F
-    P Q A B (eA : inferFinpred P A) (eB : inferFinpred Q B) c :=
-  OpFinpred PQ (F A B)
-    (LabelBinop op PQ (fun x => op (P x) (Q x)) eA eB F c).
+Structure solvedConstraint := Solved { solved_constraint :> constraint }.
+Implicit Types (c : constraint) (pc : solvedConstraint).
 
-Canonical FinpredU T P a b := LabelOneBinop P a b orb (@finpredU T).
-Canonical FinpredUx T P a b := LabelOneBinop P a b xorb (@finpredUx T).
+Structure resolve c := Resolve { constraint_trigger : constraintTrigger }.
+Canonical TriggeredResolution pc := Resolve pc TriggerConstraint.
 
-Definition LabelTerminalOp {T : eqType} (op : {pred T}) (F : finpred T) :=
-  @id labeled_bool.
-Definition LabelOneTerminalOp T op F x :=
-  @LabelTerminalOp T op F (LabelBool (op x)).
-Canonical InferTerminalFinpred {T} P F x :=
-  OpFinpred P F (@LabelTerminalOp T P F x).
+Definition Done := Fail.
+Canonical SatSuccess := Satisfy Done.
 
-Definition TryIdK := tt.
-Definition TryIdConv := TryIdK.
+Definition Unify {U1 U2} of U1 & U2 & constraint := @id constraint.
+Canonical SatUnify {U} (u : U) pc := Satisfy (Unify u u pc Fail).
+Definition Return {U1 U2} u1 u2 := @Unify U1 U2 u1 u2 Done Fail.
 
-Definition LabelIr (T : Type) a b & bool := LabelBool (a && b).
-Definition LabelSigma T a b (eP : unit) ea (eb : T -> bool) (ec : unit) :=
-  @LabelIr T a b ea.
-Definition LabelIl T a b (eNa : matchedArg bool) eb :=
-  @LabelSigma T a b tt (TryFalse a) (fun=> eb) TryIdConv.
+(* The P parameter serves two purposes: it enables change-of-variable in the  *)
+(* and-sigma case below, and it provides a context ouside of the scope of the *)
+(* original predicate variable. Note that A cannot easily play this role as   *)
+(* we sometimes need to use an auxiliary structure to select the best way to  *)
+(* construct A, in which case the scope restriction is not inherited by the   *)
+(* constituents of A.                                                         *)
+Variant hint := NoHint.
+Structure infer {T} (A : finpred T) (P : {pred T}) :=
+  Infer { infer_hint :> hint }.  (* pred A ~=~ P *)
+
+(* The inference of canonical instances of inferOp is guided by the head      *)
+(* constant of the predicate body (or the dummy constant boolIf in case of    *)
+(* a if-then-else expression) and subject to the resolution of some           *)
+(* unification constraints.                                                   *)
+Structure inferOp {T} (A : finpred T) (P : {pred T}) (c : constraint) :=
+  InferOp { applied_op :> bool }. (* applied_pred = P x for some variable x *)
+
+Structure inferenceProblem {T}
+    (A : finpred T) (* the main inference output; the A parameter also *)
+                    (* provides the scope constraint for inferring P. *)
+    (x : T)         (* a variable that is NOT in scope in either A or P *)
+    (pP : '[bool])  (* pattern to infer a P such that '[P x] ~=~ pP *)
+    (c : constraint) (* unification constraint to infer A from P (if any) *) :=
+  InferenceProblem  { problem_strategy : strategy }.
+(* We need to the MatchArg utility fo pP to ensure that in the Container      *)
+(* strategy we resolve matched_body as an instance of in_container and not    *)
+(* the converse.                                                              *)
+
+(* These are the hints that control the choice of infer instances:            *)
+(*  - TryFalse matches only if the predicate body evaluates to false.         *)
+(*  - TryOp '[Px] dispatches the inferOp inference on the head constant in    *)
+(*    Px : bool. Tryop uses the matchArg facility (see ssreflect.v) to ensure *)
+(*    that the applied_op projection has priority should that head constant   *)
+(*    be a projection with default instances such as matched_body or          *)
+(*    matched_pred.                                                           *)
+(*  - TryOp is run a second time with a dummy BoolIf constant; this second    *)
+(*    fun will only match the body of P is a boolean if-then-else. We need    *)
+(*    the dummy constant because if expressions do not have a head constants  *)
+(*    and we need to run this as a second pass to avoid preempting the        *)
+(*    instances for the usual bool operators, like orb, which expand to if's. *)
+(*  - TryFinType is the final hint that will only match when T is a finite    *)
+(*    type (whence every predicate is a finpred).                             *)
+Definition TryFalse := @id hint.
+Definition TryIf := NoHint.
+Definition TryOp of '[bool] := @id hint.
+Definition TryOpOrIf of hint & unit := @id hint.
+Definition TryFinType := @id hint.
+Definition Hint {T} (P : {pred T}) x :=
+  TryFalse ((TryOpOrIf (TryOp '[P x] TryIf) tt) (TryFinType NoHint)).
+
+Definition MatchOpArg {T} of finpred T & {pred T} & T -> hint & constraint :=
+  Fail.
+Definition OpArg {T} A P := @MatchOpArg T A P (Hint P).
+Canonical InferOpArg {T} A P pc1 (pA : @infer T A P) pc :=
+  Satisfy (MatchOpArg A P (fun=> pA) pc).
+
+Canonical Finpred0 T := Infer (@finpred0 T) pred0 (TryFalse NoHint).
+Canonical FinpredOp T A P m pc (pA : @inferOp T A P pc) :=
+  Infer A P (TryOp '[pA : bool]_m NoHint).
+
+Definition MatchBodyWith Px Px0 T A x pc pPA :=
+  MatchBody A x (@hint_of_problem T A x '[Px] pc pPA) Px0.
+Arguments MatchBodyWith Px Px0 [T] A x pc pPA.
+Canonical MatchAnyBody Px0 := MatchBodyWith (Undelimited Px0) Px0.
+
+(* The abstractPred structure is the interface for the inference of the P     *)
+(* predicate, using either the Delimited label or higher order pattern        *)
+(* unification (x is a variable not in scope in P) in the Undelimited case.   *)
+(* We record an inferred predicate as [pred x | Px] rather than (fun x => Px).*)
+Structure abstractPred T (P : {pred T}) (x : T) :=
+  AbstractPred { applied_pred :> bool }.
+Canonical AbstractDelimited T P x := @AbstractPred T P x (Delimited P x).
+Canonical AbstractUndelimited T P x :=
+  @AbstractPred T (SimplPred P) x (Undelimited (P x)).
+
+(* For the Container strategy we do not need the Delimited/Undelimited labels *)
+(* or the abstractPred interface as the memContainer instance will provide    *)
+(* both predicate and finpred.                                                *)
+Canonical SolveContainer T A x m pAx :=
+  InferenceProblem A x '[@in_container T A x pAx]_m Done TryContainer.
+
+(* Note that the first ?A ~ ?packP (Cast ?P) unification will filter the      *)
+(* context of P to remove x, which will allow the use of higher order pattern *)
+(* unification during the inference of pP. Unifying the last two parameters   *)
+(* of inferenceProblem will lead to setting ?packP := Inferred A0, hence      *)
+(* ?A := Inferred A0 (Cast P), as desired.                                    *)
+Canonical SolveInferred {T} A0 x P pack_P m pP :=
+  let pA := '[@applied_pred T P x pP]_m in
+  let cA := OpArg A0 P (Return (Inferred A0) pack_P) in
+  InferenceProblem (pack_P (Cast P)) x pA cA TryInferred.
+
+(* In the undelimited case, Coq will be trying to unify (x \in ?A) ~=~ Ax     *)
+(* with ?A : {finpred T} and Ax some arbitrary bool expression in which x may *)
+(* occur. If unfolding in (x \in ?A) has priority, e.g., when matching an     *)
+(* assumption or conclusion of a lemma, then this will ultimately lead to     *)
+(* unifying Ax ~ matched_body (Finpred.pattern ?A x (pred ?A x)) and cause    *)
+(* the MatchAnyBody default instance to start inferring ?A from Ax "as is".   *)
+(*    However if unfolding in Ax has priority (e.g., when matching a rewrite  *)
+(* redex), then Ax will be unfolded down to the last head constant that       *)
+(* expands to an irreducible match or fix (setting the rhs_is_stuck flag of   *)
+(* evar_conv), before unification even considers expanding x \in ?A. While    *)
+(* bool connectives such as andb will be protected by the rhs_is_stuck flag,  *)
+(* this will not be the case for relations such as == or <=, and this is      *)
+(* likely to spoil finpred inference in such cases.                           *)
+(*    We therefore supply some facilities for refolding such relations. We    *)
+(* can recognize basic equality predicates such as eqn or eqseq as they are   *)
+(* protected by rhs_is_stuck, but we need to beware that equality is often    *)
+(* transfered from an injection into another eqType. We can rely on the       *)
+(* eqtype.apply_injection volatile label to detect this, and more generally   *)
+(* we can use the left hand side of a base type equality to follow the        *)
+(* injection chain, and also to detect predicates derived from == such as     *)
+(* <=, pred0b, or disjoint.                                                   *)
+(*   We use a foldEq structure to implement the chain traversal and folding,  *)
+(* along with an UndelimitedEq label to call foldEq from abstractPred. We     *)
+(* also use UndelimitedEq when Ax is an && expression, as == on pairs and     *)
+(* dependent pairs expand to such expressions; in such cases the call to      *)
+(* foldEq may fail, in which case we give up on refolding and fall back to    *)
+(* the Undelimited label.                                                     *)
+Definition UndelimitedEq T (expanded_eq : bool) (lhs : T) := expanded_eq.
+Structure foldEq T (expanded_eq folded_eq : bool) := FoldEq { eq_lhs : T }.
+
+Canonical AbstractUndelimitedEq T T1 P x Px p_y :=
+  @AbstractPred T (SimplPred P) x (UndelimitedEq Px (@eq_lhs T1 Px (P x) p_y)).
+(* We need to define instances for every head constant of an hasDecEq.eq_op   *)
+(* projection, as per Print Canonical Projections hasDecEq.eq_op.             *)
+Definition MatchEqBody T y z := MatchBodyWith (@UndelimitedEq T (y == z) y).
+Arguments MatchEqBody {T} y z Px0.
+Canonical MatchEqop T mT u v := @MatchEqBody T u v (hasDecEq.eq_op mT u v).
+Canonical MatchEqb b1 b2 := MatchEqBody b1 b2 (~~ b1 (+) b2).
+Canonical MatchOptEq T u v := MatchEqBody u v (@opt_eq T u v).
+Canonical MatchSumEq T1 T2 u v := MatchEqBody u v (@sum_eq T1 T2 u v).
+Canonical MatchEqn m n := MatchEqBody m n (eqn m n).
+Canonical MatchBinNatEq m n := MatchEqBody m n (BinNat.N.eqb m n).
+Canonical MatchSeqEq T s1 s2 := MatchEqBody s1 s2 (@eqseq T s1 s2).
+Canonical MatchAndBody Px Qx :=
+  MatchBodyWith (UndelimitedEq (Px && Qx) Px) (Px && Qx).
+
+(* All canonical instances of foldEq have unfoldable head constants, so if    *)
+(* instance arguments or parameters fail to match then unification will fall  *)
+(* back on the FoldDefaultEq instance.                                        *)
+Canonical FoldDefaultEq T (x y z : T) := FoldEq (x == y) (x == y) z.
+Canonical FoldLeq (m n : nat) := FoldEq (m <= n) (m <= n) (m - n)%N.
+Canonical FoldInjEq T1 T2 b0 b f p_y :=
+  FoldEq b0 b (@eqtype.apply_inj T1 T2 f (@eq_lhs T1 b0 b p_y)).
+Canonical FoldSigEq I (T_ : I -> Type) T1 isoT1 b0 b p_u z :=
+  FoldEq b0 b (@Sigma.iso.pi1 I T_ T1 isoT1 (@eq_lhs T1 b0 b p_u) == z).
+
+Definition binopPred {T} op (P Q : {pred T}) x : bool := op (P x) (Q x).
+
+Definition InferBinaryOp T F op :=
+  fun (A B : finpred T) (P Q : {pred T}) x y =>
+  InferOp (F A B) (binopPred op P Q) (OpArg A P (OpArg B Q Done)) (op x y).
+
+Canonical FinpredOr {T} := @InferBinaryOp T finpredOr orb.
+Canonical FinpredXor {T} := @InferBinaryOp T finpredXor xorb.
+
+(* The notFinpred structure is the interface for testing whether a bool       *)
+(* expression is syntactically unlikey to be the application of a finpred to  *)
+(* the predicate variable; the P parameter provides a means of testing for    *)
+(* constant expressions that do not depend on the variable.                   *)
+(*   The nonfin parameter is used jointly with the MatchArg utility to block  *)
+(* spurrious attempts to infer a finpred structure for test_nonfin ?p_nf when *)
+(* the tested expression is of the form matched_body (pattern ...) - such an  *)
+(* attempt would actually succeed if T were a finType, so every abstract      *)
+(* finpred would be classified as "non-finite"!                               *)
+(*   We block this by using MatchArg to ensure the test_nonfin projection has *)
+(* priority, and providing an instance that lets unfication test_nonfin ?p_nf *)
+(* succeed immediately in that case, but sets the nonfin flag to false. We    *)
+(* then test the flag in a later argument, when unification has committed to  *)
+(* a value for ?p_nf.                                                         *)
+Structure notFinpred {T} (nonfin : bool) (P : {pred T}) :=
+  NotFinpred {test_nonfin : bool}.
 Definition TryConst := @id bool.
-Canonical LabelI T a b := LabelIl T a b (MatchedArg (TryConst a)) (TryFalse b).
+Canonical ConstNotFin T a a0 := @NotFinpred T true (fun=> a) (TryConst a0).
+Canonical NegbNotFin T P a := @NotFinpred T true P (negb a).
+Canonical GeqNotFin T m n r := @NotFinpred T true (fun x => m <= n x) (m <= r).
+Canonical MatchedBodyFin T P pb := @NotFinpred T false P (@matched_body T pb).
 
-Canonical FinpredIr T a b P Q A (eA : inferFinpred P A) :=
-  @OpFinpred T (fun x => P x && Q x) (finpredIr A Q) (LabelIr T a b eA).
+Definition TestNonFin T of {pred T} & T -> '[bool] & bool & constraint :=
+   @id constraint.
+Definition NonFinOp T P := @TestNonFin T P (fun x => '[P x]) true.
 
-Structure not_finpred (T : eqType) (P : {pred T}) :=
-  NotFinpred {notFin_pilot :> bool}.
-Add Printing Constructor not_finpred.
-Canonical ConstNotFin T a a1 := @NotFinpred T (fun=> a) (TryConst a1).
-Canonical NegbNotFin T P a := @NotFinpred T P (negb a).
-Canonical GeqNotFin T m n m1 n1 := @NotFinpred T (fun x => m <= n x) (m1 <= n1).
-(* Cut off spurrious attempt to infer a finpred structure for                 *)
-(* @notFin_pilot T P ?n when P x is of the form applied_finpred_holds ...;    *)
-(* this would actually succeed for if T were finite.                          *)
-Example AppliedFinpredFinite (T : eqType) (x : T) : appliedFinpred T.
-Proof. by split=> //; [apply: finpred0 | left]. Qed.
-Canonical finpredFin T P x := @NotFinpred T P (@AppliedFinpredFinite T x).
+Canonical InferNonfinOp T P nf p_nf m pc :=
+  Satisfy (TestNonFin P (fun=> '[@test_nonfin T nf P p_nf]_m) nf pc Fail).
 
-Canonical FinpredIl T a b P Q B
-  (m : matchArg) (nFa : not_finpred P) (eB : inferFinpred Q B) :=
-  @OpFinpred T (fun x => P x && Q x) (finpredIl P B)
-               (LabelIl T a b (m (nFa : bool)) eB).
+Canonical FinpredIf T A B C (P Q R : {pred T}) :=
+  let P0 x := if P x then Q x else R x in
+  let cIf := OpArg B Q (OpArg C R (Return A (finpredIf P B C))) in
+  let cIfl := OpArg B P (OpArg C R (Return A (finpredIfl B Q C))) in
+  InferOp A P0 (NonFinOp Q cIfl cIf) BoolIf.
 
-HB.mixin Record isSigmaType (I : eqType) (T_ : I -> eqType) T := {
-  to_sigma : T -> {x : I & T_ x};
-  of_sigma : {x : I & T_ x} -> T;
-  of_sigmaK : cancel of_sigma to_sigma;
-  to_sigmaK : cancel to_sigma of_sigma
-}.
+(* The SigmaOp label is intended to match predicates over S : Sigma.type I T_ *)
+(* which are expressed as a conjunction of predicates over the projections of *)
+(* a u : S, more precisely, of the shape (fun u => P (Sigma.pi1 u) && Q u)    *)
+(* where P i is a finpred over i : I, and Q (Sigma.dpair i y) is a finpred    *)
+(* over y : T_ i for all i : I, where I and T_ is the index and indexed type  *)
+(* of S, respectively. In the main use case Q u will further be of the form   *)
+(* R (Sigma.pi1 u) (Sigma.pi2 u) where R i will then be a finpred over T_ i.  *)
+(*  We intend to support both the case where S is structurally a dependent    *)
+(* pair type (e.g., S = T1 * T2), and the case where S is a type that is      *)
+(* indexed by Sigma.pi1 and T_ is a subType of S, e.g., S = seq T, pi1 = size *)
+(* T_ n = n.-tuple T. However support for the latter case will require some   *)
+(* extension of Coq.                                                          *)
+(*   The P above need to be inferred by matching the Ppi1 parameter, whose    *)
+(* value will be [preim Sigma.pi1 of P]. The next two parameters are the      *)
+(* hints for recursively inferring a finpred A for P and a finpred B i        *)
+(* parametrized by i : I for [preim Sigma.dpair i of Q]. The last parameter   *)
+(* is a copy of Q and is used to ensure that the finpred F obtained by        *)
+(* combining A and B is actually a finpred for (fun u => Ppi1 u && Q u) and   *)
+(* not (fun u => Ppi1 u && Q (dpair (pi1 u) (pi2 u))). We can always use      *)
+(* Sigma.eta to reduce the latter case, by to do so we need to pass a copy of *)
+(* Q ot the finpred combinator, thus duplicating it in the finpred expression *)
+(* since B will essentially also be a copy of Q. This will not be usually     *)
+(* necessary (e.g., when Q = R (pi1 u) (pi2 u), or S = seq T), so we use      *)
+(* unification with this copy of Q to select the correct finpred combinator.  *)
+Import Subst (abstractIn, AbstractIn, abstract).
+Definition MatchSigmaOp {T I} (A : finpred T) (Q : {pred T}) :=
+  fun of abstractIn I T & T -> hint & I -> T -> hint & {pred T} =>
+  @id constraint.
+(* A label for the last {pred T} argument of SigmaOp; the corresponding       *)
+(* canonical value avoids an unneeded eta-reduction; if this fails the label  *)
+(* argument will become a parameter of the eta-reducing finpred combinator.   *)
+Definition TryNoEta T := @id {pred T}.
+Definition SigmaOp {T} I A P Q :=
+  @MatchSigmaOp T I A Q (AbstractIn P) (Hint P) (fun=> Hint Q) (TryNoEta Q).
 
-#[short(type=sigmaEqType)]
-HB.structure Definition SigmaEqType I T_ :=
-  {T of isSigmaType I T_ T & Equality T}.
+(* Note that I will only be instantiated when matching the SigmaOp label;     *)
+(* otherwise I is left uninstatiated, but this is of no consequence as cSigma *)
+(* will then not appear in the inferred inferOp canonical instance.           *)
+Canonical FinpredAnd T I A B (P Q : {pred T}) Px Qx :=
+  let cAndl := NonFinOp P (OpArg B Q (Return A (finpredAndl P B))) in
+  let cAndr := OpArg B P (Return A (finpredAndr B Q)) in
+  InferOp A (binopPred andb P Q) (cAndl (SigmaOp I A P Q cAndr)) (Px && Qx).
 
-HB.instance Definition _ I T_ :=
-  @isSigmaType.Build I T_ _ id id (frefl _) (frefl _).
+Section Sigma.
 
-HB.instance Definition _ (T1 T2 : eqType) :=
-  isSigmaType.Build T1 (fun=> T2) _  pair_of_tagK tag_of_pairK.
+Context (I : eqType) (T_ : I -> eqType)  (S : Sigma.eqType I T_).
+Import Sigma (pi1, pi2, dpair).
+Implicit Types (B : finpred I) (C : forall i, finpred (T_ i)).
+Implicit Types (P : {pred I}) (Q : {pred S}) (R : forall i, {pred T_ i}).
+Let Rpair Q i := [preim dpair i of Q].
+Let Renvelope R := forall i, envelope (R i).
+Let Rpi R := [pred u : S | R (pi1 u) (pi2 u)].
 
-HB.instance Definition _ (I : eqType) (T1_ T2_ : I -> eqType) :=
-  isSigmaType.Build _ _ _ (@tag2_of_tagK I T1_ T2_) tag_of_tag2K.
+(* The structure factorPi1 P factors pi1 out of its {pred S} projection Ppi1, *)
+(* i.e., it finds P such that Ppi1 == (preim pi1 P).                          *)
+(*   Ideally, this operation should notrequire a structure, as it is an       *)
+(* obvious extension of higher-order unification, which is indeed implemented *)
+(* by, e.g, Hol Light. The second-best alternative would be to use the Elpi   *)
+(* unification entry point and do the substitution Elpi. A Typeclass/Ltac     *)
+(* solution would be need a similar entry point for typeclass resolution;     *)
+(* currently, even with the Typeclass Resolution For Conversion flag set      *)
+(* Typeclass resolution will only happen between calls to unification from    *)
+(* type inference so it cannot provide timely information during unification. *)
+(* Finally, a pure Canonical Structure partial solution, using CS resolution  *)
+(* to traverse the applicative part of Ppi1 u that depends on u to compute P  *)
+(* (maybe allowing fun) would require a means of reliably matching an         *)
+(* arbitrary application f a, which the currenf Coq unification heuristics do *)
+(* not provide. It treats the obvious pattern ?f ?a as a higher order pattern *)
+(* for which it defers resolution, thus making it useless for traversal.      *)
+(* There is a workaround using as CS with a default projection value, e.g.,   *)
+(* unwrap ?wf ?a, but it is blocked by the faulty extraarg computation for    *)
+(* default projection instances.                                              *)
+(*   The temporary solution adopted here is use an auxiliary structure        *)
+(* substDpair R to unify (Rpair Ppi1) with R = (fun i _ => P i). When S is a  *)
+(* structural sigma type then pi1 (dpair i y) will reduce to i so if indeed   *)
+(* Ppi1 = P \o pi1 the two terms will be convertible. However the       *)
+(* unification can still fail as Coq does not fully reduce a term to check a  *)
+(* variable (here, y) does not occur in it; it does do head reduction, which  *)
+(* is enough to recognize the abstract form of [predX A & B].                 *)
 
-Structure splaySigmaPred I T_ (pT := forall x : I, {pred T_ x})
-                         (P : pT) (P1 : {pred I}) (P2 : pT) :=
-  SplaySigmaPred{ sigmaPred_pilot :> unit }.
-Canonical InferSigmaPred I T_ P1 P2 :=
-  @SplaySigmaPred I T_ (fun x y => P1 x && P2 x y) P1 P2 tt.
+(* The combineSigma structure is used to select the appropriate finpred       *)
+(* combination A of the finpred B of the left hand side predicate P, and of   *)
+(* the parametrized finpred C i of the right hand side predicate Rpair Q i.   *)
+(* It has output parameter A, and input parameters B, C, as well as the       *)
+(* predicate R i and the envelope mixin eC i of C i. Its {pred S} projection  *)
+(* is the original right hand side predicate Q, initially labeled with        *)
+(* TryNoEta, and is used with R to first test whether no explicit eta is      *)
+(* needed (because eta holds by conversion), and if this fails to incorporate *)
+(* eta reduction in the construction of A.                                    *)
+Structure combineSigma (A : finpred S) B C R (eC : Renvelope R) :=
+  CombineSigma { sigma_pi2_pred :> {pred S} }.
 
-Program Definition finpredSigma I T_ (T : sigmaEqType T_)
-                      (A : finpred I) (B : forall x, finpred (T_ x)) :=
-  @Finpred T [preim to_sigma of [pred z | tag z \in A & tagged z \in B _]] _.
+(* The no-eta case. *)
+Program Definition finpredSigma B C :=
+  @Finpred S [pred u | pi1 u \in B & pi2 u \in C (pi1 u)] _.
 Next Obligation.
-exists [seq of_sigma (Tagged T_ y) | x <- support A, y <- support (B x)] => z.
-rewrite !inE; set a := tag _; set b := tagged _ => /andP[Aa Bb].
-apply/allpairsPdep; exists a, b; split; try by rewrite mem_support.
-by apply/(canRL to_sigmaK); case: (to_sigma z) @a @b {Aa Bb}.
+exists [seq dpair i y | i <- support B, y <- support (C i)] => u.
+rewrite !inE => /andP[Bu1 Cu2]; apply/allpairsPdep.
+by exists (pi1 u), (pi2 u); split; rewrite (Support.mem, Sigma.eta).
 Qed.
+Canonical FinpredSigma B C R eC :=
+  @CombineSigma (finpredSigma B C) B C R eC (TryNoEta (Rpi R)).
 
-Program Definition finpred_idK (T : eqType) f (fK : f =1 id) (P : {pred T}) 
-  (E : finpredEnvelope [preim f of P]) := @Finpred T P _.
+(* Use eta reduction on the right hand side. *)
+Program Definition finpredSigmaEta B Q (eC : Renvelope (Rpair Q)) :=
+  @Finpred S [pred u | pi1 u \in B & u \in Q] _.
 Next Obligation.
-by case: E => s fPs; exists s => z; rewrite -[z in z \in P -> _]fK => /fPs. 
+exists (support (finpredSigma B (fun i => Finpred (Rpair Q i) (eC i)))) => u.
+by rewrite Support.mem !inE Sigma.eta.
 Qed.
+Canonical FinpredSigmaEta B C Q eC :=
+  @CombineSigma (finpredSigmaEta B eC) B C (Rpair Q) eC Q.
 
-Structure finpredIdPreim (T : eqType) (f : T -> T) (fK : f =1 id)
-    (P Pf : {pred T}) (Cf : finpredEnvelope Pf) (FC : finpred T -> finpred T) :=
-  FinpredIdPreim {finpredIdPreim_pilot :> unit}.
-Canonical FinpredIdConvPreim T f fK P Cf :=
-  @FinpredIdPreim T f fK P P Cf id TryIdConv.
-Canonical FinpredIdKPreim T f fK P Cf :=
-  @FinpredIdPreim T f fK P [preim f of P] Cf (fun=> finpred_idK fK Cf) TryIdK.
+(* The resolution of the SigmaOp constraint; note the four canonical          *)
+(* structure resolution sub-calls for B, C, P and A.                          *)
+Canonical InferSigmaOp A B C P Q (pP : abstract pi1 P) :=
+  fun (pB : infer B P) (pC : forall i, infer (C i) (Rpair Q i)) =>
+  fun  (pA : combineSigma A B C (fun i => mixin (C i))) =>
+  Satisfy (MatchSigmaOp A Q pP (fun=> pB) (fun i _ => pC i) pA Fail).
 
-Canonical FinpredSigma I T_ (T : sigmaEqType T_) a b (P : {pred T})
-                       (P0 := fun x y => P (of_sigma (Tagged T_ y)))
-                       P1 P2 (eP : splaySigmaPred P0 P1 P2)
-                       A (eA : @inferFinpred I P1 A)
-                       B (eB : forall x, @inferFinpred (T_ x) (P2 x) (B x))
-                       (C := finpredSigma T A B) (E := envelope C)
-                       FC (eC : finpredIdPreim to_sigmaK P E FC) :=
-  @OpFinpred T P (FC C) (LabelSigma a b eP eA eB eC).
+End Sigma.
 
-Record finPreimFun (A B T : eqType) := FinPreimFun {
-  finPreim_fun :> A -> B -> T;
-  has_finPreim :> {b : T -> seq B | forall x y, y \in b (finPreim_fun x y)}
+(* The finPreimFun and finPreimOp records are assembled to construct a linear *)
+(* sized representation of an expression f x with a finite pre image - i.e.,  *)
+(* such that for any given y, f x = y for only finitely many x. Both allow    *)
+(* for hook composition, i.e., for stray occurrences of the predicate         *)
+(* variable x outside of the argument(s) of the function or operator. For     *)
+(* example one record for +%N represents expressions y + g x where y is to be *)
+(* instantiated with an expression with finite preimage.                      *)
+Definition unaryOpPreimBound {T0 T1 T} (h : T0 -> T1 -> T) :=
+  {b : T -> seq T1 | forall x y, y \in b (h x y)}.
+Definition binaryOpPreimBound {T0 T1 T2 T} (h : T0 -> T1 -> T2 -> T) :=
+  {b : T -> seq T1 * seq T2 |
+   forall x y1 y2, let (b1, b2) := b (h x y1 y2) in (y1 \in b1) || (y2 \in b2)
+  }.
+Record preimUnaryOp T0 T1 T := PreimUnaryOp {
+  preim_unary_op :> T0 -> T1 -> T;
+  preim_unary_op_bounded : unaryOpPreimBound preim_unary_op
 }.
-Add Printing Constructor finPreimFun.
+Arguments PreimUnaryOp {T0 T1 T} _ _.
+Record preimBinaryOp T0 T1 T2 T := PreimBinaryOp {
+  preim_binary_op :> T0 -> T1 -> T2 -> T;
+  preim_binary_op_bounded : binaryOpPreimBound preim_binary_op
+}.
+Arguments PreimBinaryOp {T0 T1 T2 T} _ _.
+Definition preimFun T0 T := preimUnaryOp T0 T0 T.
+Definition preim_fun {T0 T} (f : preimFun T0 T) x := f x x.
+Coercion preim_fun : preimFun >-> Funclass.
+Definition PreimFun T0 T f b : preimFun T0 T := PreimUnaryOp (fun=> f) b.
+Arguments PreimFun {T0 T} f b.
 
-Program Definition PcanFinPreim A {B T} f g (fK : pcancel f g) :=
-  @FinPreimFun A B T (fun=> f) _.
+(* Factories for preimOp. *)
+Program Definition PcanPreimOp T0 {T1 T} (f : T1 -> T) g (fK : pcancel f g) :=
+  PreimUnaryOp (fun _ : T0 => f) _.
 Next Obligation. by exists (seq_of_opt \o g) => _ y /=; rewrite fK inE. Qed.
-Arguments PcanFinPreim A {B T} f g fK.
-Definition CanFinPreim A {B T} f g (fK : cancel f g) :=
-  @PcanFinPreim A B T f (Some \o g) (can_pcan fK).
-Arguments CanFinPreim A {B T} f g fK.
-Program Definition ComposeFinPreim {A B C T}
-    (f : finPreimFun A C T) (g : finPreimFun A B C) :=
-  @FinPreimFun A B T (fun x y => f x (g x y)) _.
+Arguments PcanPreimOp T0 {T1 T} f g fK.
+Definition CanPreimOp T0 {T1 T} (f : T1 -> T) g (fK : cancel f g) :=
+  PcanPreimOp T0 f (Some \o g) (can_pcan fK).
+Arguments CanPreimOp T0 {T1 T} f g fK.
+Definition PreimId T : preimFun T T := CanPreimOp T id id (frefl _).
+
+Program Definition ComposePreimUnaryOp {T0 T1 T} :=
+  fun (h : preimUnaryOp T0 T1 T) (f : preimFun T0 T1) =>
+  PreimFun (fun x => h x (f x)) _.
 Next Obligation.
-case: f g => f [bf bfP] [g [bg bgP]] /=.
-by exists (flatten \o map bg \o bf) => x y; apply/flatten_mapP; exists (g x y).
+case: h f => h [b bh] [f [b1 b1f]] /=.
+by exists (flatten \o map b1 \o b) => _ x; apply/flatten_mapP; exists (f x x).
 Qed.
 
-Definition TryVal T := @id T.
-
-Structure labelFinPreimExpr (A T : eqType) (x : A) :=
-  LabelFinPreimExpr { finPreim_expr : T }.
-Definition LabelFinPreimApp {A B T} (f : finPreimFun A B T) (x : A)
-                                  (z z0 : labelFinPreimExpr T x) (y : B) := z0.
-Definition OneFinPreimApp {A B T} x y fxy (f : finPreimFun A B T) :=
-  let z := LabelFinPreimExpr x (f x y) in
-  LabelFinPreimApp f z (LabelFinPreimExpr x fxy) (TryVal y).
-Fixpoint ManyFinPreimApp {A B T} x y f0xy (fs : seq (finPreimFun A B T)) :=
-  if fs isn't f :: fs' then LabelFinPreimExpr x f0xy else
-  let z := LabelFinPreimExpr x (f x y) in
-  @LabelFinPreimApp A B T f x z (ManyFinPreimApp x y f0xy fs') (TryVal y).
-
-Definition finPreim_subType A (T : eqType) P (B : @subEqType T P) :=
-  @PcanFinPreim A B T val _ valK.
-Canonical LabelValFinPreim {A T : eqType} {P} (B : @subEqType T P) x (y : B) :=
-  let z := LabelFinPreimExpr x (TryVal (val y)) in
-  @LabelFinPreimApp A B T (finPreim_subType A B) x z z y.
-
-Definition finPreim_pair A (T1 T2 : eqType) (y1 : T1) :=
-  @CanFinPreim A T2 _ (pair y1) snd (frefl _).
-Canonical FinPreim_pair A x (T1 T2 : eqType) (y1 : T1) (y2 : T2) :=
-  OneFinPreimApp x y2 (y1, y2) (finPreim_pair A T2 y1).
-
-Definition finPreim_Tagged A (I : eqType) i (T_ : I -> eqType) :=
-  PcanFinPreim A (@Tagged I i T_) otagged_at TaggedK.
-
-Canonical FinPreim_Tagged A x (I : eqType) (T_ : I -> eqType) i y :=
-  OneFinPreimApp x y (Tagged T_ y) (finPreim_Tagged A i T_).
-
-Definition finPreim_Tagged2 A (I : eqType) i (T1_ T2_ : I -> eqType) y1 :=
-  PcanFinPreim A (@Tagged2 I i T1_ T2_ y1) _ Tagged2K.
-Canonical FinPreim_Tagged2 A x (I : eqType) (T1_ T2_ : I -> eqType) i y1 y2 :=
-  OneFinPreimApp x y2 (@Tagged2 I i T1_ T2_ y1 y2) (finPreim_Tagged2 A T2_ y1).
-
-Canonical LabelVarFinPreim {A} x := @LabelFinPreimExpr A A x x.
-Definition MarkComp T := @id T.
-Definition IdFinPreim A := @CanFinPreim A A A id id (frefl _).
-Structure inferFinPreimApp (A : eqType) T (f : finPreimFun A A T) (x : A) :=
-  InferFinPreimApp { labeled_finPreim_expr :> labelFinPreimExpr T x }.
-Canonical InferFinPreimVar A x :=
-  InferFinPreimApp (IdFinPreim A) (LabelVarFinPreim x).
-Canonical InferFinPreimComp A B T f g x (y : inferFinPreimApp g x) z :=
-  InferFinPreimApp (ComposeFinPreim f g)
-     (@LabelFinPreimApp A B T (MarkComp f) x z z (finPreim_expr y)).
-
-Structure inferFinPreim A T (fF : finpred T) (F : finpred A) (x : A) :=
-  InferFinPreimPreimage { finPreim_val : T }.
-
-Program Definition finpred_preim A T (f : finPreimFun _ A _) (fF : finpred T) :=
-  @Finpred A [preim (fun x => f x x) of fF] _.
+Program Definition ComposePreimBinaryOp {T0 T1 T2 T} :=
+  fun (h : preimBinaryOp T0 T1 T2 T) =>
+  fun (f1 : preimFun T0 T1) (f2 : preimFun T0 T2) =>
+  PreimFun (fun x => h x (f1 x) (f2 x)) _.
 Next Obligation.
-case: f => f [g fk] /=; exists (flatten (map g (support fF))) => x Ffx.
-by apply/flatten_mapP; exists (f x x); rewrite ?mem_support.
+case: h f1 f2 => h [b bh] [f1 [b1 b1f]] [f2 [b2 b2f]] /=.
+exists (fun z => flatten (map b1 (b z).1) ++ flatten (map b2 (b z).2)) => _ x.
+rewrite mem_cat; apply/orP; case: (b _) (bh x (f1 x x) (f2 x x)) => bh1 bh2 /=.
+by do [case/orP; [left | right]; apply/flatten_mapP];
+   [exists (f1 x x) | exists (f2 x x)].
 Qed.
 
-Definition TryPreim T := @id T.
-Definition TryVar := TryPreim.
-
-Canonical FinpredNopreim A (F : finpred A) (x : A) :=
-  @InferFinPreimPreimage A A F F x (TryVar x).
-Canonical FinpredPreim A T Ff f x (fx : inferFinPreimApp f x) :=
-  @InferFinPreimPreimage A T Ff (finpred_preim f Ff) x
-     (TryPreim (finPreim_expr fx)).
-
-Definition LabelPreimPred {A T : eqType} (b : labeled_bool)
-  (P : {pred A}) (Ff : finpred T) (f : A -> T) := b.
-Canonical InferPreimPred {A T : eqType} P b (Ff : finpred T) (F : finpred A)
-    (eF : forall x : A, inferFinPreim Ff F x) :=
-  OpFinpred P F (LabelPreimPred b P Ff (fun x => finPreim_val (eF x))).
-Definition FinpredPredFor (A T : eqType) z0 (P : {pred T}) Ff f :=
-  @LabelPreimPred A T z0 [preim f of P] Ff (fun x => TryVar (TryVal (f x))).
-Definition OneFinpredPred A T b0 Ff :=
-  @FinpredPredFor A T (LabelBool b0) (finpred_pred Ff) Ff.
-Fixpoint ManyFinpredPred {A T : eqType} b0 Ffs f :=
-  if Ffs isn't Ff :: Ffs' then LabelBool b0 else
-  @FinpredPredFor A T (ManyFinpredPred b0 Ffs' f) (finpred_pred Ff) Ff f.
-Arguments FinpredPredFor A {T} z0 P Ff f.
-Arguments OneFinpredPred A {T} b0 Ff f.
-Arguments ManyFinpredPred A {T} b0 Ffs f.
-
-Canonical Finpred_finpred {A T} y0 (F : finpred T) f :=
-  OneFinpredPred A (apply_finpred y0 F) F f.
-Canonical Finpred_seq {A T} s f y0 :=
-  @OneFinpredPred A T (mem_seq s y0) (finpred_seq s) f.
-Canonical Finpred_leq A m0 n m := OneFinpredPred A (m0 <= n) (finpred_leq n) m.
-Canonical Finpred_eq (A T : eqType) (a x0 y0 : T) y :=
-  ManyFinpredPred A (x0 == y0 :> T) [:: finpred1 a; finpred1x a] y.
-Canonical Finpred_eq_op (A T : eqType) eT0 (a x0 y0 : T) y :=
-  ManyFinpredPred A (hasDecEq.eq_op eT0 x0 y0) [:: finpred1 a; finpred1x a] y.
-Canonical Finpred_eqn A n m0 n0 y :=
-  ManyFinpredPred A (eqn m0 n0) [:: finpred_leq n; finpred1 n; finpred1x n] y.
-
-Definition finPreim_succ A := @CanFinPreim A _ _ succn predn (frefl _).
-Canonical FinPreim_succ A x n := OneFinPreimApp x n n.+1 (finPreim_succ A).
-
-Program Definition FinPreim_nat A T f g 
-  (bf : forall x n, n <= g (f x n)) := @FinPreimFun A nat T f _.
-Next Obligation.
-by exists (fun y => iota 0 (g y).+1) => x n; rewrite mem_iota ltnS bf.
+Lemma NatPreimUnaryOpBound T0 T (h : T0 -> nat -> T) :
+  {b | forall x n, n <= b (h x n)} -> unaryOpPreimBound h.
+Proof.
+case=> b bh; exists (fun y => iota 0 (b y).+1) => x n.
+by rewrite mem_iota ltnS bh.
 Qed.
 
-Definition finPreim_pred A :=
-  @FinPreim_nat A _ (fun=> predn) succn (fun _ n => leqSpred n).
-Canonical FinPreim_pred A x y := OneFinPreimApp x y y.-1 (finPreim_pred A).
+Definition NatPreimUnaryOp T0 T h b :=
+  PreimUnaryOp h (@NatPreimUnaryOpBound T0 T h b).
 
-Definition finPreim_addnl A m_ :=
-  @FinPreim_nat A _ (fun x n => n + m_ x) id (fun _ _ => leq_addr _ _).
-Definition finPreim_addnr A m :=
-  @FinPreim_nat A _ (fun x n => m + n) id (fun _ _ => leq_addl _ _).
-Canonical FinPreim_addn A m m_ x n m0 n0 :=
-  ManyFinPreimApp x n (m0 + n0) [:: finPreim_addnr A m; finPreim_addnl m_].
+Lemma NatPreimBinaryOpBound T0 T (h : T0 -> nat-> nat -> T) :
+  {b | forall x n1 n2, minn n1 n2 <= b (h x n1 n2)} -> binaryOpPreimBound h.
+Proof.
+case=> b bh; pose bs z := iota 0 (b z).+1.
+exists (fun z => (bs z, bs z)) => x n1 n2 /=.
+by rewrite !mem_iota /= !ltnS -geq_min.
+Qed.
 
-Definition finPreim_double A := @CanFinPreim A _ _ double half doubleK.
+Definition NatPreimBinaryOp T0 T h b :=
+  PreimBinaryOp h (@NatPreimBinaryOpBound T0 T h b).
+
+(* Optimize the function expression by eliding the identity finPreim. *)
+Structure compPreim {T0 T1 T} (h : preimUnaryOp T0 T1 T) (hf : preimFun T0 T) :=
+  CompPreim { compPreim_rhs :> preimFun T0 T1 }.
+Canonical compPreimWithId {T0 T} (f : preimFun T0 T) :=
+  CompPreim f f (PreimId T0).
+Canonical compPreimWithFun {T0 T1 T} (h : preimUnaryOp T0 T1 T) f :=
+  CompPreim h (ComposePreimUnaryOp h f) f.
+
+Structure inferPreim {T0 T} (f : preimFun T0 T) (g : T0 -> T) c :=
+  InferPreim { preim_body : T }.
+
+Canonical InferPreimId {T} x := InferPreim (PreimId T) id Done x.
+
+Definition MatchPreimArg {T0 T} of preimFun T0 T & T0 -> T & T0 -> T :=
+  fun of constraint => Fail.
+Definition TryVal {T} := @id T.
+Definition PreimArg {T0 T} f g := @MatchPreimArg T0 T f g (TryVal \o g).
+Canonical InferPreimArg {T0 T} f g pc1 pf pc2 :=
+  Satisfy (MatchPreimArg f g (fun=> @preim_body T0 T f g pc1 pf) pc2).
+
+Definition InferPreimUnaryOp {T0 T1 T} (h : preimUnaryOp T0 T1 T) hxy :=
+  fun (f : preimFun T0 T) (pf : compPreim h f) (g1 : T0 -> T1) =>
+  InferPreim f (fun x => h x (g1 x)) (PreimArg pf g1 Done) hxy.
+Arguments InferPreimUnaryOp {T0 T1 T} h hxy f pf g1.
+
+Fixpoint SomePreimUnaryOp {T0 T1 T} g pf g1 (hs : seq (preimUnaryOp T0 T1 T)) :=
+  if hs isn't h :: hs' then Fail else let hg x := h x (g1 x) in
+  Unify g hg (PreimArg (pf h) g1 Done) (SomePreimUnaryOp g pf g1 hs').
+Definition InferSomePreimUnaryOp {T0 T1 T} hs hxy :=
+  fun (f : preimFun T0 T) g (pf : forall h, compPreim h f) g1 =>
+  InferPreim f g (@SomePreimUnaryOp T0 T1 T g [eta pf] g1 hs) hxy.
+Arguments InferSomePreimUnaryOp {T0 T1 T} hs hxy f g pf g1.
+
+Definition InferPreimBinaryOp {T0 T1 T2 T} (h : preimBinaryOp T0 T1 T2 T) hxy :=
+  fun f1 f2 => let hf := ComposePreimBinaryOp h f1 f2 in
+  fun g1 g2 => let hg x := h x (g1 x) (g2 x) in
+  InferPreim hf hg (PreimArg f1 g1 (PreimArg f2 g2 Done)) hxy.
+Arguments InferPreimBinaryOp {T0 T1 T2 T} h hxy f1 f2 g1 g2.
+
+Definition preim_val T0 T P (S : subEqType P) :=
+  @PcanPreimOp T0 S T val _ valK.
+Canonical InferPreim_val {T0 T P} (S : @subEqType T P) (y : S) :=
+  InferPreimUnaryOp (preim_val T0 S) (TryVal (val y)).
+
+Program Definition finpred_preim T0 T (f : preimFun T0 T) (A : finpred T) :=
+  Finpred [preim f of A] _.
+Next Obligation.
+case: f => f [b bf] /=; exists (flatten (map b (support A))) => x Afx.
+by apply/flatten_mapP; exists (f x x); rewrite ?Support.mem.
+Qed.
+
+Structure preimOf {T0 T} (Af : finpred T0) (A : finpred T) :=
+  PreimOf { preimOf_fun :> preimFun T0 T }.
+Canonical PreimOfId T A := PreimOf A A (PreimId T).
+Canonical PreimOfFun T0 T A f := @PreimOf T0 T (finpred_preim f A) A f.
+
+Definition InferPreimOf {T0 T} A label Pf Af b :=
+  fun (pAf : @preimOf T0 T Af A) (pf : forall x, inferPreim pAf x) =>
+  InferOp Af Pf (label Pf (fun x => matched_preim (pf x)) (MatchOp b)).
+
+Definition PreimOp {T0 T} of finpred T & {pred T0} & T0 -> T := @id matchOp.
+Canonical InferPreimOp {T0 T} A := @InferPreimOf T0 T A (PreimOp A).
+
+Definition InOp {T0 T} of {pred T} & stepHint & {pred T0} & T0 -> T :=
+  @id matchOp.
+Canonical Finpred_in {T0 T} (f : T0 -> T) (P : {pred T}) y0 :=
+  let Pf x := f x \in P in
+  InOp P (TryFalse (P y0)) Pf (f \o TryVal) (MatchOp (y0 \in P)).
+Canonical InferInOp {T0 T} P A (pA : @infer T A P) :=
+  @InferPreimOf T0 T A (InOp P pA).
+
+Definition FinpredPred {T} p0 A T0 f :=
+  @PreimOp T0 T A (fun x => pred A (f x)) (f \o TryVal) p0.
+Definition OneFinpredPred {T} b0 := @FinpredPred T (MatchOp b0).
+Fixpoint ManyFinpredPred {T} b0 As T0 (f : T0 -> T) :=
+  if As isn't A :: As' then MatchOp b0 else
+  FinpredPred (ManyFinpredPred b0 As' f) A f.
+
+Canonical Finpred_finpred {T} y0 (A : finpred T) :=
+  OneFinpredPred (matched_pred (mem A) y0) A.
+Canonical Finpred_seq {T} (s : seq T) y0 :=
+  OneFinpredPred (mem_seq s y0) (finpred_of_seq s).
+Canonical Finpred_leq m0 n := OneFinpredPred (m0 <= n) (finpredLeq n).
+Canonical Finpred_eq {T} (a x0 y0 : T) :=
+  ManyFinpredPred (x0 == y0) [:: finpred1 a; finpred1x a].
+
+Definition preim_pair T0 T1 T2 (y1 : T1) :=
+  @CanPreimOp T0 T2 _ (pair y1) snd (frefl _).
+Canonical Preim_pair T0 T1 T2 x (y1 : T1) (y2 : T2) :=
+  OnePreimUnaryOp x (preim_pair T0 T2 y1) y2 (y1, y2).
+
+Definition preim_Tagged T0 I (T_ : I -> eqType) i :=
+  PcanPreimOp T0 (@Tagged I i T_) otagged_at TaggedK.
+Canonical Preim_Tagged T0 x I (T_ : I -> eqType) i y :=
+  OnePreimUnaryOp x (preim_Tagged T0 T_ i) y (Tagged T_ y) .
+
+Definition preim_Tagged2 T0 I (T1_ T2_ : I -> eqType) i y1 :=
+  PcanPreimOp T0 (@Tagged2 I i T1_ T2_ y1) _ Tagged2K.
+Canonical Preim_Tagged2 T0 x I (T1_ T2_ : I -> eqType) i (y1 : T1_ i) y2 :=
+  OnePreimUnaryOp x (preim_Tagged2 T0 T2_ y1) y2 (Tagged2 T1_ T2_ y1 y2). 
+
+Definition preim_succn T0 := @CanPreimOp T0 _ _ succn predn (frefl _).
+Canonical Preim_succn T0 x n := OnePreimUnaryOp x (preim_succn T0) n n.+1.
+
+Program Definition preim_predn T0 := @NatPreimUnaryOp T0 _ (fun=> predn) _.
+Next Obligation. by exists succn => _ []. Qed.
+Canonical Preim_predn T0 x y := OnePreimUnaryOp x (preim_predn T0) y y.-1.
+
+Program Definition preim_addnl T0 m_ :=
+  @NatPreimUnaryOp T0 _ (fun x n => n + m_ x) _.
+Next Obligation. by exists id => x n; apply: leq_addr. Qed.
+Program Definition preim_addnr T0 m :=
+  @NatPreimUnaryOp T0 _ (fun _ n => m + n) _.
+Next Obligation. by exists id => x n; apply: leq_addl. Qed.
+Canonical Preim_addn T0 m m_ x n m0 n0 :=
+  ManyPreimUnaryOps x n (m0 + n0) [:: preim_addnr T0 m; preim_addnl m_].
+
+Definition preim_double T0 := @CanPreimOp T0 _ _ double half doubleK.
 Canonical FinPreim_double A x n := OneFinPreimApp x n n.*2 (finPreim_double A).
 
 Program Definition finPreim_half A :=
